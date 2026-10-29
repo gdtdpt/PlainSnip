@@ -252,32 +252,56 @@ public sealed class CaptureOverlayForm : Form
         g.DrawLine(cross, cx - S(12), cy, cx + S(12), cy);
         g.DrawLine(cross, cx, cy - S(12), cx, cy + S(12));
 
-        // 取色信息条（值 + 操作提示；格式由 Shift 切换）
+        // 取色信息面板：坐标 / 色块+值 / 快捷键提示（四行，行宽按最长内容计算）
         if (cur.X >= 0 && cur.X < _snap.Width && cur.Y >= 0 && cur.Y < _snap.Height)
         {
             Color px = _snap.GetPixel(Math.Clamp(cur.X, 0, _snap.Width - 1), Math.Clamp(cur.Y, 0, _snap.Height - 1));
             string value = _colorFormatHex
                 ? $"#{px.R:X2}{px.G:X2}{px.B:X2}"
                 : $"{px.R}, {px.G}, {px.B}";
-            const string hint = "C 复制 · Shift 切换";
-            var vSize = TextRenderer.MeasureText(value, _uiFont);
-            var hSize = TextRenderer.MeasureText(hint, _uiFont);
-            var box = new Rectangle(magX, magY + MagBox + S(4),
-                Math.Max(Math.Max(vSize.Width, hSize.Width) + S(12), MagBox),
-                vSize.Height + hSize.Height + S(6));
-            using var bg = new SolidBrush(Color.FromArgb(210, 20, 20, 20));
-            g.FillRectangle(bg, box);
+            string coord = $"({cur.X}, {cur.Y})";
+            string hintCopy = "按 C 复制颜色值";
+            string hintSwitch = "按 Shift 切换 HEX/RGB";
+
+            int pad = S(10), lineH = S(20), swatch = S(12), gap = S(6);
+            int wCoord = TextRenderer.MeasureText(coord, _uiFont).Width;
+            int wValue = TextRenderer.MeasureText(value, _uiFont).Width + swatch + gap;
+            int wH1 = TextRenderer.MeasureText(hintCopy, _uiFont).Width;
+            int wH2 = TextRenderer.MeasureText(hintSwitch, _uiFont).Width;
+            var panel = new Rectangle(0, 0, Math.Max(Math.Max(wCoord, wValue), Math.Max(wH1, wH2)) + pad * 2,
+                pad * 2 + lineH * 4 + S(2));
+
+            // 位置：默认贴放大镜下方，放不下则翻到上方；水平随放大镜夹取
+            panel.X = Math.Clamp(magX, 0, Math.Max(0, ClientSize.Width - panel.Width));
+            panel.Y = magY + MagBox + S(6);
+            if (panel.Bottom > ClientSize.Height) panel.Y = magY - S(6) - panel.Height;
+
+            using var panelBg = new SolidBrush(Color.FromArgb(215, 15, 15, 15));
+            g.FillRectangle(panelBg, panel);
+            using var swatchPen = new Pen(Color.FromArgb(140, 255, 255, 255), 1f);
+
+            int tx = panel.X + pad;
+            int ty = panel.Y + pad;
+            int textW = panel.Right - pad - tx;
+            TextRenderer.DrawText(g, coord, _uiFont, new Rectangle(tx, ty, textW, lineH),
+                Color.FromArgb(190, 255, 255, 255), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            ty += lineH;
+            var swRect = new Rectangle(tx, ty + (lineH - swatch) / 2, swatch, swatch);
             using var swatchBrush = new SolidBrush(px);
-            var swatchRect = new Rectangle(box.X + S(6), box.Y + S(2), box.Height - S(4), box.Height - S(4));
-            g.FillRectangle(swatchBrush, swatchRect);
-            g.DrawRectangle(border, swatchRect);
-            int textX = box.X + box.Height;
-            TextRenderer.DrawText(g, value, _uiFont, new Rectangle(textX, box.Y, box.Right - textX, vSize.Height),
-                Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
-            TextRenderer.DrawText(g, hint, _uiFont, new Rectangle(textX, box.Y + vSize.Height, box.Right - textX, hSize.Height),
-                Color.FromArgb(170, 255, 255, 255), TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+            g.FillRectangle(swatchBrush, swRect);
+            g.DrawRectangle(swatchPen, swRect);
+            TextRenderer.DrawText(g, value, _uiFont, new Rectangle(tx + swatch + gap, ty, textW - swatch - gap, lineH),
+                Color.White, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            ty += lineH;
+            TextRenderer.DrawText(g, hintCopy, _uiFont, new Rectangle(tx, ty, textW, lineH),
+                Color.FromArgb(225, 255, 255, 255), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            ty += lineH;
+            TextRenderer.DrawText(g, hintSwitch, _uiFont, new Rectangle(tx, ty, textW, lineH),
+                Color.FromArgb(225, 255, 255, 255), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
             if (_colorCopiedFeedback != null)
-                TextRenderer.DrawText(g, _colorCopiedFeedback, _uiFont, new Point(magX, box.Bottom + S(4)), Color.FromArgb(180, 255, 230, 120));
+                TextRenderer.DrawText(g, _colorCopiedFeedback, _uiFont,
+                    new Point(panel.X, panel.Bottom + S(4)), Color.FromArgb(190, 255, 230, 120));
         }
     }
 
