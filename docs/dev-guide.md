@@ -33,14 +33,17 @@ tools\build.ps1 -SelfTest  # 构建后顺带跑 --selftest
 |---|---|
 | （无） | 托盘常驻，单实例（`Local\PlainSnip.SingleInstance` 互斥体） |
 | `--settings` | 只开设置窗，落盘后退出；不建托盘、不占互斥体 |
+| `--shot` | 截图冒烟：自动框选 + 6 秒退出，验证遮罩 UI |
+| `--hover` | 悬停预选冒烟：按光标位置高亮候选窗口 + 6 秒退出，验证 M1b |
+| `--pin` | 贴图冒烟：合成测试图钉在屏幕中央（带边框角标）+ 8 秒退出，验证 M2 |
 | `--selftest` | 无界面自测，退出码 0/1 |
 
 ## 仓库结构
 
 ```
 src/PlainSnip/            主工程（net8.0-windows WinForms）
-  Program.cs              入口：参数分发 + 单实例互斥
-  AppContext.cs           托盘常驻上下文 + 热键挂载
+  Program.cs              入口：参数分发 + 单实例互斥 + 冒烟入口
+  AppContext.cs           托盘常驻上下文 + 热键挂载 + 贴图托盘列表
   HotkeySpec.cs           热键规格（Mod+VK ⇄ 字符串）
   HotkeyManager.cs        RegisterHotKey/WM_HOTKEY 封装（隐藏消息窗）
   HotkeyBox.cs            按键捕获文本框
@@ -48,7 +51,13 @@ src/PlainSnip/            主工程（net8.0-windows WinForms）
   Autostart.cs            开机自启（HKCU Run）
   SettingsForm.cs         设置窗（含手动 DPI 缩放，见下）
   IconFactory.cs          从嵌入资源加载 App.ico（托盘/窗体图标）
+  ScreenCapture.cs        屏幕捕获服务（BitBlt 快照/区域 + 跨屏选区合成；M4 分帧复用）
+  CaptureSession.cs       截图会话状态机（选区统一记录为虚拟桌面物理坐标）
+  CaptureOverlayForm.cs   per-monitor 全屏遮罩窗（框选/手柄/放大镜/工具条/悬停预选）
   WindowDetector.cs       窗口自动检测（EnumWindows Z 序 + PID 过滤 + DWM 边界 + 子窗口下钻启发式）
+  PinGeometry.cs          贴图几何纯函数（缩放锚点/夹取/初始摆放/alpha 压平）
+  PinWindow.cs            贴图窗（LWA_ALPHA 透明度、滚轮缩放、右键菜单、鼠标穿透）
+  PinManager.cs           贴图注册表（托盘列表 / 关闭全部 / 取消穿透）
   SelfTest.cs             --selftest
 tools/build.ps1           构建脚本
 tools/make_icon.ps1       重新生成 App.ico（虚线选框+剪刀，16/24/32/48/256 多尺寸；DIB 条目 16-48 + PNG 条目 256）
@@ -64,13 +73,17 @@ dist/                     产物（gitignore）
   （见 SettingsForm）。M1 遮罩/放大镜照此办理。
 - **热键**：`RegisterHotKey` + 隐藏 `NativeWindow` 消息窗；注册失败显式气泡报错 + 打开设置，不静默。
 - **默认热键**：截图 F1 / 贴图 F3（与 Snipaste 一致，2026-10-29 定案）。
+- **贴图窗**：`WS_EX_LAYERED` + `LWA_ALPHA` 整窗透明度（不用 UpdateLayeredWindow）；
+  `ShowWithoutActivation=true` 创建不抢焦点；物理像素恒定，跨屏不做 DPI 重算（`AutoScaleMode.None` + SetWindowPos）；
+  缩放缓存位图（放大 NearestNeighbor / 缩小 Bicubic）。细节见 PROJECT.md §5.7。
 - **标注可编辑推后到 v1.5、滚动截图 M4**：见 PROJECT.md §9 决策表。
 
 ## 里程碑进度
 
 - [x] **M0 骨架**（2026-10-29）：托盘 + 热键 + 设置持久化 + selftest + UI 冒烟（截图闭环，200% DPI 下验证）
-- [ ] M1 截图核心（建议切 M1a 遮罩框选放大镜 / M1b 两级窗口检测）
-- [ ] M2 贴图（前置：贴图窗状态机设计文档）
+- [x] **M1a 截图核心**（2026-10-29）：快照冻结 + 遮罩框选 + 8 手柄 + 放大镜取色 + 工具条
+- [x] **M1b 窗口检测**（2026-10-29）：两级检测 + 悬停预选 + 单击/拖动分型（真机验收通过）
+- [x] **M2 贴图**（2026-10-29）：PinWindow/PinManager + F3/工具条/托盘三入口 + 冒烟
 - [ ] M3 标注精简版
 - [ ] M4 滚动截图（前置：拼接算法设计文档 + ShareX ScrollingCapture 研读）
 - [ ] M5 v1.5 增强

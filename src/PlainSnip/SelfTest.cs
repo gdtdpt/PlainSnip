@@ -107,8 +107,48 @@ public static class SelfTest
                 WindowDetector.PickCandidate(new[] { root, okChild }).Bounds == okChild.Bounds);
             Check("下钻启发式：面积比例回退",
                 WindowDetector.TooSmall(new Rectangle(0, 0, 40, 40), new Rectangle(0, 0, 800, 600)));
-            Check("下钻启发式：边界值 32x24 不算过小",
-                !WindowDetector.TooSmall(new Rectangle(0, 0, 32, 24), new Rectangle(0, 0, 800, 600)));
+            Check("下钻启发式：32x24 边长阈值不算过小",
+                !WindowDetector.TooSmall(new Rectangle(0, 0, 32, 24), new Rectangle(0, 0, 100, 100)));
+        }
+
+        // ---- 贴图几何（M2 纯函数） ----
+        {
+            Check("贴图缩放比例夹取 [0.1, 8]",
+                PinGeometry.ClampScale(0.001f) == 0.1f && PinGeometry.ClampScale(99f) == 8f
+                && PinGeometry.ClampScale(float.NaN) == 0.1f);
+
+            var sz = PinGeometry.ScaledSize(new Size(200, 100), 1.5f);
+            Check("贴图缩放尺寸计算", sz.Width == 300 && sz.Height == 150);
+
+            // 光标锚点：缩放前后锚点下的相对位置不变
+            var zoomed = PinGeometry.ZoomAround(new Rectangle(100, 100, 200, 100), new Size(200, 100), 2f, new Point(150, 150));
+            bool anchorKept = zoomed == new Rectangle(50, 50, 400, 200)
+                && Math.Abs((150 - zoomed.X) / (double)zoomed.Width - 0.25) < 1e-6
+                && Math.Abs((150 - zoomed.Y) / (double)zoomed.Height - 0.5) < 1e-6;
+            Check("贴图缩放锚点保持（光标下像素不动）", anchorKept);
+
+            var (s1, b1) = PinGeometry.PlaceInitial(new Rectangle(0, 0, 1920, 1080), new Size(400, 300), new Point(960, 540));
+            Check("贴图初始摆放 1:1 居中于光标",
+                Math.Abs(s1 - 1f) < 1e-6 && b1 == new Rectangle(760, 390, 400, 300));
+
+            var (s2, b2) = PinGeometry.PlaceInitial(new Rectangle(0, 0, 1920, 1080), new Size(3000, 2000), new Point(960, 540));
+            Check("贴图初始摆放：超工作区 80% 等比缩小",
+                s2 < 1f && b2.Width <= 1536 && b2.Height <= 864 && b2.Width > 0);
+
+            var (_, b3) = PinGeometry.PlaceInitial(new Rectangle(0, 0, 1920, 1080), new Size(400, 300), new Point(10, 10));
+            Check("贴图初始摆放：夹回工作区", b3.X == 0 && b3.Y == 0);
+
+            Check("贴图不透明度换算", PinGeometry.ToAlphaByte(100) == 255
+                && PinGeometry.ToAlphaByte(50) == 128
+                && PinGeometry.ToAlphaByte(5) == 26);   // 下限 10%
+
+            using var alpha = new Bitmap(20, 20, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(alpha)) g.Clear(Color.FromArgb(0, 255, 0, 0));
+            bool detectsAlpha = PinGeometry.HasAlpha(alpha);
+            using var flat = PinGeometry.Prepare(alpha, Color.Black);
+            Check("贴图 alpha 检测与压平",
+                detectsAlpha && !PinGeometry.HasAlpha(flat)
+                && flat.GetPixel(10, 10).R < 20 && flat.GetPixel(10, 10).A == 255);
         }
 
         // ---- 开机自启注册表可读（只读，不写） ----

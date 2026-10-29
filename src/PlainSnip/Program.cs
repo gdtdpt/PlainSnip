@@ -34,6 +34,10 @@ internal static class Program
                     Application.Run(hoverSession.InteractiveForm);
                 return 0;
 
+            case "pin":
+                // UI 冒烟入口：造一张合成图钉到屏幕中央（带边框与角标），8 秒后自动退出
+                return RunPinSmoke();
+
             default:
                 break;
         }
@@ -48,6 +52,41 @@ internal static class Program
         }
 
         Application.Run(new AppContext(AppSettings.Load()));
+        return 0;
+    }
+
+    /// <summary>--pin 冒烟：合成一张带文字的测试图，钉在屏幕中央，定时自动退出。</summary>
+    private static int RunPinSmoke()
+    {
+        var work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+        int w = Math.Min(760, work.Width / 2), h = Math.Min(460, work.Height / 2);
+
+        var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            using var bg = new System.Drawing.Drawing2D.LinearGradientBrush(
+                new Rectangle(0, 0, w, h), Color.FromArgb(38, 44, 58), Color.FromArgb(18, 20, 26), 45f);
+            g.FillRectangle(bg, 0, 0, w, h);
+            using var grid = new Pen(Color.FromArgb(60, 120, 160, 200), 1f);
+            for (int x = 0; x < w; x += 40) g.DrawLine(grid, x, 0, x, h);
+            for (int y = 0; y < h; y += 40) g.DrawLine(grid, 0, y, w, y);
+            using var font = new Font("Microsoft YaHei UI", 20f, FontStyle.Bold);
+            TextRenderer.DrawText(g, "PlainSnip 贴图", font, new Rectangle(0, h / 2 - 40, w, 50),
+                Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            using var small = new Font("Consolas", 11f);
+            TextRenderer.DrawText(g, $"pin smoke · {w}x{h}", small, new Rectangle(0, h / 2 + 10, w, 30),
+                Color.FromArgb(150, 220, 230, 245), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+
+        var pin = PinManager.Current.Create(bmp, new Point(work.X + work.Width / 2, work.Y + work.Height / 2), debugChrome: true);
+        bmp.Dispose();
+        if (pin == null) return 1;
+
+        var timer = new System.Windows.Forms.Timer { Interval = 8000 };
+        timer.Tick += (_, _) => { timer.Stop(); timer.Dispose(); pin.Close(); };
+        timer.Start();
+
+        Application.Run(pin);
         return 0;
     }
 }

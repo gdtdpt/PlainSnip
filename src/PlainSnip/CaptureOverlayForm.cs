@@ -21,7 +21,7 @@ public sealed class CaptureOverlayForm : Form
     private const int MagSrc = 16;
     private const int MagZoom = MagBox / MagSrc; // 9x
 
-    private static readonly string[] _toolbarButtonTexts = { "复制", "保存", "取消" };
+    private static readonly string[] _toolbarButtonTexts = { "贴图", "复制", "保存", "取消" };
 
     private Dictionary<string, Rectangle> _toolbarRects = new();
     private Rectangle _toolbarBounds = Rectangle.Empty;
@@ -50,10 +50,6 @@ public sealed class CaptureOverlayForm : Form
 
         _feedbackTimer.Tick += (_, _) => { _colorCopiedFeedback = null; _feedbackTimer.Stop(); Invalidate(); };
     }
-
-    private static void _sessionCopy() { }
-    private static void _sessionSave() { }
-    private static void _sessionCancel() { }
 
     // ---- 坐标助手 ----
 
@@ -299,6 +295,7 @@ public sealed class CaptureOverlayForm : Form
                 {
                     switch (text)
                     {
+                        case "贴图": _session.PinSelection(); return;
                         case "复制": _session.CopySelection(); return;
                         case "保存": _session.SaveSelection(); return;
                         case "取消": _session.Cancel(); return;

@@ -230,6 +230,16 @@ public sealed class CaptureSession : IDisposable
         Close();
     }
 
+    /// <summary>把当前选区钉成贴图（M2）：先关遮罩再建贴图窗，贴在选区原位置。</summary>
+    public void PinSelection()
+    {
+        if (State != SelState.Selected || Selection.IsEmpty) return;
+        using var bmp = ScreenCapture.ComposeSelection(_shots, Selection);
+        var at = Selection.Location;
+        Close();
+        PinManager.Current.Create(bmp, at);
+    }
+
     public void SaveSelection()
     {
         if (State != SelState.Selected || Selection.IsEmpty || _interactive == null) return;
