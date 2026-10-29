@@ -358,10 +358,13 @@ public sealed class CaptureOverlayForm : Form
     protected override void OnMouseDoubleClick(MouseEventArgs e)
     {
         base.OnMouseDoubleClick(e);
+        // WinForms 双击序列：Down/Up/Down/DoubleClick/Up——第二次 Down 已把状态切成 Moving，
+        // 此处先收敛回 Selected 再复制，否则条件永不成立（双击复制失效）。
         if (e.Button == MouseButtons.Left
-            && _session.State == CaptureSession.SelState.Selected
+            && _session.State is CaptureSession.SelState.Selected or CaptureSession.SelState.Moving
             && _session.SelectionLocal(_screen).Contains(e.Location))
         {
+            if (_session.State == CaptureSession.SelState.Moving) _session.EndInteraction();
             _session.CopySelection();
         }
     }
