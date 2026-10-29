@@ -392,14 +392,19 @@ public sealed class PinWindow : Form
 
     private void ShowMenu(Point local)
     {
-        _menu?.Dispose();
-        _menu = BuildMenu();
+        // 复用同一菜单实例：关闭后立即 Dispose 会被 ToolStripManager.ModalMenuFilter
+        // 再次关闭（CreateHandle on disposed）而崩溃；条目勾选状态在每次打开时重建。
+        if (_menu == null)
+        {
+            _menu = new ContextMenuStrip();
+            _menu.Opening += (_, _) => PopulateMenu(_menu!);
+        }
         _menu.Show(this, local);
     }
 
-    private ContextMenuStrip BuildMenu()
+    private void PopulateMenu(ContextMenuStrip menu)
     {
-        var menu = new ContextMenuStrip();
+        menu.Items.Clear();
 
         var copy = new ToolStripMenuItem("复制到剪贴板(&C)") { ShortcutKeyDisplayString = "Ctrl+C" };
         copy.Click += (_, _) => CopyToClipboard();
@@ -440,8 +445,6 @@ public sealed class PinWindow : Form
         var close = new ToolStripMenuItem("关闭(&X)") { ShortcutKeyDisplayString = "Esc / 双击" };
         close.Click += (_, _) => Close();
         menu.Items.Add(close);
-
-        return menu;
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)

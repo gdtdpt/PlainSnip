@@ -39,7 +39,9 @@ Write-Host "产物: $exe"
 
 if ($SelfTest) {
     Write-Host '== 运行 --selftest =='
-    & $exe --selftest
+    # GUI 程序直接 & 调用不会等待，退出码与输出都会丢；用管道强制等待并收集输出。
+    & $exe --selftest | Out-Host
+    if ($LASTEXITCODE -ne 0) { Write-Error 'selftest 失败。' }
     exit $LASTEXITCODE
 }
 

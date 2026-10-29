@@ -32,6 +32,8 @@ public sealed class CaptureOverlayForm : Form
     private Point _cursorVirtual;                    // 光标虚拟桌面物理坐标
     private string? _colorCopiedFeedback;            // 取色复制提示
     private readonly System.Windows.Forms.Timer _feedbackTimer = new() { Interval = 1200 };
+    private ContextMenuStrip? _colorMenu;                 // 复用实例：关闭即 Dispose 会被 ModalMenuFilter 二次关闭而崩溃
+    private ContextMenuStrip? _widthMenu;
 
     public CaptureOverlayForm(CaptureSession session, ScreenCapture.ScreenShot shot, bool interactive)
     {
@@ -366,36 +368,40 @@ public sealed class CaptureOverlayForm : Form
 
     private void ShowColorMenu(Point local)
     {
-        var menu = new ContextMenuStrip();
-        (string Name, Color C)[] colors =
+        if (_colorMenu == null)
         {
-            ("红色", Color.Red), ("橙色", Color.Orange), ("绿色", Color.LimeGreen),
-            ("蓝色", Color.DodgerBlue), ("白色", Color.White), ("黑色", Color.Black),
-        };
-        foreach (var (name, c) in colors)
-        {
-            double lum = (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) / 255;
-            var item = new ToolStripMenuItem(name) { BackColor = c, ForeColor = lum > 0.5 ? Color.Black : Color.White };
-            var cc = c;
-            item.Click += (_, _) => _session.SetStrokeColor(cc);
-            menu.Items.Add(item);
+            _colorMenu = new ContextMenuStrip();
+            (string Name, Color C)[] colors =
+            {
+                ("红色", Color.Red), ("橙色", Color.Orange), ("绿色", Color.LimeGreen),
+                ("蓝色", Color.DodgerBlue), ("白色", Color.White), ("黑色", Color.Black),
+            };
+            foreach (var (name, c) in colors)
+            {
+                double lum = (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) / 255;
+                var item = new ToolStripMenuItem(name) { BackColor = c, ForeColor = lum > 0.5 ? Color.Black : Color.White };
+                var cc = c;
+                item.Click += (_, _) => _session.SetStrokeColor(cc);
+                _colorMenu.Items.Add(item);
+            }
         }
-        menu.Closed += (_, _) => menu.Dispose();
-        menu.Show(this, local);
+        _colorMenu.Show(this, local);
     }
 
     private void ShowWidthMenu(Point local)
     {
-        var menu = new ContextMenuStrip();
-        foreach (var (name, logical) in new[] { ("细", 2), ("中", 4), ("粗", 8) })
+        if (_widthMenu == null)
         {
-            var item = new ToolStripMenuItem($"{name}（{logical}px）");
-            int px = S(logical);
-            item.Click += (_, _) => _session.SetStrokeWidth(px);
-            menu.Items.Add(item);
+            _widthMenu = new ContextMenuStrip();
+            foreach (var (name, logical) in new[] { ("细", 2), ("中", 4), ("粗", 8) })
+            {
+                var item = new ToolStripMenuItem($"{name}（{logical}px）");
+                int px = S(logical);
+                item.Click += (_, _) => _session.SetStrokeWidth(px);
+                _widthMenu.Items.Add(item);
+            }
         }
-        menu.Closed += (_, _) => menu.Dispose();
-        menu.Show(this, local);
+        _widthMenu.Show(this, local);
     }
 
     // ---- 文字标注编辑框 ----
@@ -788,6 +794,8 @@ public sealed class CaptureOverlayForm : Form
     {
         base.OnFormClosed(e);
         CloseTextEditor(commit: false);
+        _colorMenu?.Dispose();
+        _widthMenu?.Dispose();
         _uiFont.Dispose();
         _feedbackTimer.Stop();
         _feedbackTimer.Dispose();
