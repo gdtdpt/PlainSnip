@@ -22,9 +22,10 @@ public sealed class CaptureOverlayForm : Form
     private const int MagZoom = MagBox / MagSrc; // 9x
 
     /// <summary>工具条按钮标识。</summary>
-    private enum ToolBtn { Select, Rect, Ellipse, Arrow, Pen, Text, Mosaic, Serial, Color, Width, Pin, Copy, Save, Cancel }
+    private enum ToolBtn { Select, Rect, Ellipse, Arrow, Pen, Text, Mosaic, Serial, Undo, Redo, Color, Width, Pin, Copy, Save, Cancel }
 
     private readonly List<(ToolBtn Id, Rectangle Rect)> _tbItems = new();
+    private readonly HashSet<ToolBtn> _tbDisabled = new();
     private Rectangle _toolbarBounds = Rectangle.Empty;   // 悬停隐藏放大镜用
     private ToolBtn? _hoverBtn;
     private TextBox? _textEditor;                         // 文字标注编辑框
@@ -202,35 +203,45 @@ public sealed class CaptureOverlayForm : Form
     private void DrawToolbar(Graphics g)
     {
         var selLocal = _session.SelectionLocal(_screen);
-        int btnH = S(38), margin = S(8), padX = S(16), gap = S(2), iconBtn = S(36), sepW = S(10);
-        var textBtns = new[] { (ToolBtn.Pin, "贴图"), (ToolBtn.Copy, "复制"), (ToolBtn.Save, "保存"), (ToolBtn.Cancel, "取消") };
-
-        // 总宽：8 工具图标 + 分隔 + 颜色/线宽 2 图标 + 4 文字按钮
-        int total = S(8) * 2 + iconBtn * 10 + gap * 13 + sepW;
-        foreach (var (_, text) in textBtns) total += TextRenderer.MeasureText(text, _uiFont).Width + padX * 2 + gap;
+        int btnH = S(30), margin = S(6), padX = S(5), gap = S(1), iconBtn = S(26), sepW = S(7), radius = S(6);
+        const int btnCount = 16;   // 8 工具 + 撤销/重做 + 颜色/线宽 + 贴图/复制/保存/取消
+        int total = padX * 2 + btnCount * iconBtn + (btnCount - 1) * gap + 3 * (sepW + gap * 2);
 
         var tb = new Rectangle(selLocal.X, selLocal.Bottom + margin, total, btnH);
         if (tb.Bottom > ClientSize.Height) tb.Y = selLocal.Y - margin - btnH;      // 贴底翻转
         tb.X = Math.Clamp(tb.X, 0, Math.Max(0, ClientSize.Width - total));
         _toolbarBounds = tb;
 
-        using var bg = new SolidBrush(Color.FromArgb(225, 28, 28, 30));
-        using var hoverBg = new SolidBrush(Color.FromArgb(255, 70, 130, 220));
-        using var hoverBgPlain = new SolidBrush(Color.FromArgb(255, 64, 64, 68));
-        using var activeBg = new SolidBrush(Color.FromArgb(255, 40, 96, 170));
-        g.FillRectangle(bg, tb);
-
         _tbItems.Clear();
-        int x = tb.X + S(8);
+        _tbDisabled.Clear();
 
-        Rectangle AddBtn(ToolBtn id, int w, bool active, bool danger = false)
+        using var bgPath = RoundRect(tb, radius);
+        using (var bg = new SolidBrush(Color.FromArgb(245, 245, 245))) g.FillPath(bg, bgPath);
+        using (var border = new Pen(Color.FromArgb(204, 204, 204))) g.DrawPath(border, bgPath);
+
+        using var hoverBg = new SolidBrush(Color.FromArgb(228, 228, 228));
+        using var activeBg = new SolidBrush(Color.FromArgb(206, 231, 255));
+        using var sepPen = new Pen(Color.FromArgb(214, 214, 214), 1f);
+
+        int x = tb.X + padX;
+        Rectangle AddBtn(ToolBtn id, bool active, bool disabled = false)
         {
-            var rect = new Rectangle(x, tb.Y, w, btnH);
+            var rect = new Rectangle(x, tb.Y + (btnH - iconBtn) / 2, iconBtn, iconBtn);
             _tbItems.Add((id, rect));
-            if (active) g.FillRectangle(activeBg, rect);
-            else if (_hoverBtn == id) g.FillRectangle(danger ? hoverBgPlain : hoverBg, rect);
-            x += w + gap;
+            if (disabled) _tbDisabled.Add(id);
+            else if (active || _hoverBtn == id)
+            {
+                using var p = RoundRect(rect, S(4));
+                g.FillPath(active ? activeBg : hoverBg, p);
+            }
+            x += iconBtn + gap;
             return rect;
+        }
+        void AddSep()
+        {
+            x += gap;
+            g.DrawLine(sepPen, x, tb.Y + S(7), x, tb.Bottom - S(7));
+            x += sepW + gap;
         }
 
         var tools = new[] { (ToolBtn.Select, AnnotationTool.None), (ToolBtn.Rect, AnnotationTool.Rect),
@@ -238,90 +249,127 @@ public sealed class CaptureOverlayForm : Form
             (ToolBtn.Pen, AnnotationTool.Pen), (ToolBtn.Text, AnnotationTool.Text),
             (ToolBtn.Mosaic, AnnotationTool.Mosaic), (ToolBtn.Serial, AnnotationTool.Serial) };
         foreach (var (id, tool) in tools)
-            DrawToolIcon(g, id, AddBtn(id, iconBtn, _session.ActiveTool == tool));
+            DrawToolIcon(g, id, AddBtn(id, _session.ActiveTool == tool), false);
 
-        using var sepPen = new Pen(Color.FromArgb(80, 255, 255, 255), 1f);
-        g.DrawLine(sepPen, x + sepW / 2, tb.Y + S(8), x + sepW / 2, tb.Bottom - S(8));
-        x += sepW;
-
-        DrawToolIcon(g, ToolBtn.Color, AddBtn(ToolBtn.Color, iconBtn, false));
-        DrawToolIcon(g, ToolBtn.Width, AddBtn(ToolBtn.Width, iconBtn, false));
-
-        foreach (var (id, text) in textBtns)
-        {
-            var rect = AddBtn(id, TextRenderer.MeasureText(text, _uiFont).Width + padX * 2, false,
-                danger: id == ToolBtn.Cancel);
-            TextRenderer.DrawText(g, text, _uiFont, rect, Color.White,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        }
+        AddSep();
+        bool canUndo = _session.History.CanUndo, canRedo = _session.History.CanRedo;
+        DrawToolIcon(g, ToolBtn.Undo, AddBtn(ToolBtn.Undo, false, !canUndo), !canUndo);
+        DrawToolIcon(g, ToolBtn.Redo, AddBtn(ToolBtn.Redo, false, !canRedo), !canRedo);
+        AddSep();
+        DrawToolIcon(g, ToolBtn.Color, AddBtn(ToolBtn.Color, false), false);
+        DrawToolIcon(g, ToolBtn.Width, AddBtn(ToolBtn.Width, false), false);
+        AddSep();
+        DrawToolIcon(g, ToolBtn.Pin, AddBtn(ToolBtn.Pin, false), false);
+        DrawToolIcon(g, ToolBtn.Copy, AddBtn(ToolBtn.Copy, false), false);
+        DrawToolIcon(g, ToolBtn.Save, AddBtn(ToolBtn.Save, false), false);
+        DrawToolIcon(g, ToolBtn.Cancel, AddBtn(ToolBtn.Cancel, false), false);
     }
 
-    /// <summary>工具条图标（GDI 自绘，全部按 rect 居中）。</summary>
-    private void DrawToolIcon(Graphics g, ToolBtn id, Rectangle r)
+    private static GraphicsPath RoundRect(Rectangle r, int radius)
     {
-        using var pen = new Pen(Color.White, 1.6f);
+        int d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
+        var p = new GraphicsPath();
+        p.AddArc(r.X, r.Y, d, d, 180, 90);
+        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
+    }
+
+    /// <summary>工具条图标（GDI 自绘，浅色底深色线，坐标按 DPI 缩放，全部按 rect 居中）。</summary>
+    private void DrawToolIcon(Graphics g, ToolBtn id, Rectangle r, bool disabled)
+    {
+        Color ic = disabled ? Color.FromArgb(198, 198, 198) : Color.FromArgb(64, 64, 64);
+        float dpi = DeviceDpi / 96f;
+        int U(int v) => (int)Math.Round(v * dpi);
+        using var pen = new Pen(ic, MathF.Max(1f, 1.5f * dpi));
         int cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
         switch (id)
         {
             case ToolBtn.Select:
             {
-                using var fill = new SolidBrush(Color.White);
+                using var fill = new SolidBrush(ic);
                 g.FillPolygon(fill, new[]
                 {
-                    new Point(cx - 4, cy - 7), new Point(cx - 4, cy + 7), new Point(cx - 1, cy + 3),
-                    new Point(cx + 2, cy + 7), new Point(cx + 4, cy + 5), new Point(cx + 1, cy + 2),
+                    new Point(cx + U(-4), cy + U(-7)), new Point(cx + U(-4), cy + U(7)), new Point(cx + U(-1), cy + U(3)),
+                    new Point(cx + U(2), cy + U(7)), new Point(cx + U(4), cy + U(5)), new Point(cx + U(1), cy + U(2)),
                 });
                 break;
             }
             case ToolBtn.Rect:
-                g.DrawRectangle(pen, cx - 8, cy - 6, 16, 12);
+                g.DrawRectangle(pen, cx - U(7), cy - U(5), U(14), U(10));
                 break;
             case ToolBtn.Ellipse:
-                g.DrawEllipse(pen, cx - 8, cy - 6, 16, 12);
+                g.DrawEllipse(pen, cx - U(7), cy - U(5), U(14), U(10));
                 break;
             case ToolBtn.Arrow:
             {
-                g.DrawLine(pen, cx - 8, cy + 6, cx + 2, cy - 4);
-                using var fill = new SolidBrush(Color.White);
+                g.DrawLine(pen, cx + U(-8), cy + U(6), cx + U(2), cy + U(-4));
+                using var fill = new SolidBrush(ic);
                 g.FillPolygon(fill, new[]
                 {
-                    new Point(cx + 8, cy - 8), new Point(cx - 1, cy - 5), new Point(cx + 5, cy + 1),
+                    new Point(cx + U(8), cy + U(-8)), new Point(cx + U(-1), cy + U(-5)), new Point(cx + U(5), cy + U(1)),
                 });
                 break;
             }
             case ToolBtn.Pen:
             {
-                using var thick = new Pen(Color.White, 3f);
-                g.DrawLine(thick, cx - 5, cy + 5, cx + 5, cy - 5);
-                g.FillRectangle(Brushes.White, cx - 8, cy + 5, 4, 4);
+                using var thick = new Pen(ic, MathF.Max(2f, 3f * dpi));
+                g.DrawLine(thick, cx + U(-5), cy + U(5), cx + U(5), cy + U(-5));
+                using var fill = new SolidBrush(ic);
+                g.FillRectangle(fill, cx + U(-8), cy + U(4), U(4), U(4));
                 break;
             }
             case ToolBtn.Text:
-                TextRenderer.DrawText(g, "文", _uiFont, r, Color.White,
+                TextRenderer.DrawText(g, "文", _uiFont, r, ic,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 break;
             case ToolBtn.Mosaic:
             {
-                int s2 = S(7), o = S(2);
-                using var dim = new SolidBrush(Color.FromArgb(150, 255, 255, 255));
-                g.FillRectangle(Brushes.White, cx - s2 - o, cy - s2 - o, s2, s2);
+                int s2 = U(6), o = U(2);
+                using var fill = new SolidBrush(ic);
+                using var dim = new SolidBrush(Color.FromArgb(150, ic));
+                g.FillRectangle(fill, cx - s2 - o, cy - s2 - o, s2, s2);
                 g.FillRectangle(dim, cx + o, cy - s2 - o, s2, s2);
                 g.FillRectangle(dim, cx - s2 - o, cy + o, s2, s2);
-                g.FillRectangle(Brushes.White, cx + o, cy + o, s2, s2);
+                g.FillRectangle(fill, cx + o, cy + o, s2, s2);
                 break;
             }
             case ToolBtn.Serial:
             {
-                int d = S(18);
-                using var fill = new SolidBrush(Color.FromArgb(255, 0, 120, 215));
+                int d = U(16);
+                using var fill = new SolidBrush(Color.FromArgb(0, 120, 215));
                 g.FillEllipse(fill, cx - d / 2, cy - d / 2, d, d);
                 TextRenderer.DrawText(g, "1", _uiFont, r, Color.White,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 break;
             }
+            case ToolBtn.Undo:      // ↩ 左向箭头 + 右端上勾尾巴
+            {
+                g.DrawLine(pen, cx + U(7), cy + U(2), cx - U(4), cy + U(2));
+                using var fill = new SolidBrush(ic);
+                g.FillPolygon(fill, new[]
+                {
+                    new Point(cx + U(-8), cy + U(2)), new Point(cx + U(-3), cy + U(-3)), new Point(cx + U(-3), cy + U(7)),
+                });
+                g.DrawArc(pen, cx, cy - U(5), U(7), U(7), -90, 90);
+                break;
+            }
+            case ToolBtn.Redo:      // ↪ 镜像
+            {
+                g.DrawLine(pen, cx - U(7), cy + U(2), cx + U(4), cy + U(2));
+                using var fill = new SolidBrush(ic);
+                g.FillPolygon(fill, new[]
+                {
+                    new Point(cx + U(8), cy + U(2)), new Point(cx + U(3), cy + U(-3)), new Point(cx + U(3), cy + U(7)),
+                });
+                g.DrawArc(pen, cx - U(7), cy - U(5), U(7), U(7), -90, -90);
+                break;
+            }
             case ToolBtn.Color:
             {
-                int s2 = S(14);
+                int s2 = U(13);
                 using var fill = new SolidBrush(_session.StrokeColor);
                 var rect = new Rectangle(cx - s2 / 2, cy - s2 / 2, s2, s2);
                 g.FillRectangle(fill, rect);
@@ -330,11 +378,48 @@ public sealed class CaptureOverlayForm : Form
             }
             case ToolBtn.Width:
             {
-                int w2 = S(18);
-                using var thick = new Pen(Color.White, Math.Clamp(_session.StrokeWidth, 2, 10));
+                int w2 = U(16);
+                using var thick = new Pen(ic, Math.Clamp(_session.StrokeWidth, 2, 12));
                 g.DrawLine(thick, cx - w2 / 2, cy, cx + w2 / 2, cy);
                 break;
             }
+            case ToolBtn.Pin:       // 图钉：横梁 + 锥身 + 针尖
+            {
+                using var fill = new SolidBrush(ic);
+                g.FillRectangle(fill, cx + U(-5), cy + U(-8), U(10), U(3));
+                g.FillPolygon(fill, new[]
+                {
+                    new Point(cx + U(-4), cy + U(-5)), new Point(cx + U(4), cy + U(-5)),
+                    new Point(cx + U(2), cy), new Point(cx + U(-2), cy),
+                });
+                g.DrawLine(pen, cx, cy, cx, cy + U(7));
+                break;
+            }
+            case ToolBtn.Copy:      // 双页
+            {
+                g.DrawRectangle(pen, cx + U(-6), cy + U(-7), U(9), U(11));
+                using var fill = new SolidBrush(Color.FromArgb(245, 245, 245));
+                var front = new Rectangle(cx + U(-2), cy + U(-4), U(9), U(11));
+                g.FillRectangle(fill, front);
+                g.DrawRectangle(pen, front);
+                break;
+            }
+            case ToolBtn.Save:      // 软盘
+            {
+                g.DrawPolygon(pen, new[]
+                {
+                    new Point(cx + U(-7), cy + U(-7)), new Point(cx + U(3), cy + U(-7)),
+                    new Point(cx + U(7), cy + U(-3)), new Point(cx + U(7), cy + U(7)),
+                    new Point(cx + U(-7), cy + U(7)),
+                });
+                g.DrawRectangle(pen, cx + U(-3), cy + U(-7), U(6), U(4));
+                g.DrawRectangle(pen, cx + U(-4), cy + U(1), U(8), U(6));
+                break;
+            }
+            case ToolBtn.Cancel:    // ×
+                g.DrawLine(pen, cx + U(-5), cy + U(-5), cx + U(5), cy + U(5));
+                g.DrawLine(pen, cx + U(5), cy + U(-5), cx + U(-5), cy + U(5));
+                break;
         }
     }
 
@@ -345,8 +430,16 @@ public sealed class CaptureOverlayForm : Form
         return null;
     }
 
+    private Rectangle RectOf(ToolBtn id)
+    {
+        foreach (var (bid, rect) in _tbItems)
+            if (bid == id) return rect;
+        return Rectangle.Empty;
+    }
+
     private void HandleToolbarClick(ToolBtn id, MouseEventArgs e)
     {
+        if (_tbDisabled.Contains(id)) { Invalidate(); return; }
         switch (id)
         {
             case ToolBtn.Select: _session.SetTool(AnnotationTool.None); break;
@@ -357,16 +450,32 @@ public sealed class CaptureOverlayForm : Form
             case ToolBtn.Text: _session.SetTool(AnnotationTool.Text); break;
             case ToolBtn.Mosaic: _session.SetTool(AnnotationTool.Mosaic); break;
             case ToolBtn.Serial: _session.SetTool(AnnotationTool.Serial); break;
-            case ToolBtn.Color: ShowColorMenu(e.Location); break;
-            case ToolBtn.Width: ShowWidthMenu(e.Location); break;
+            case ToolBtn.Undo: _session.Undo(); break;
+            case ToolBtn.Redo: _session.Redo(); break;
+            case ToolBtn.Color: ShowColorMenu(RectOf(id)); break;
+            case ToolBtn.Width: ShowWidthMenu(RectOf(id)); break;
             case ToolBtn.Pin: _session.PinSelection(); break;
             case ToolBtn.Copy: _session.CopySelection(); break;
             case ToolBtn.Save: _session.SaveSelection(); break;
             case ToolBtn.Cancel: _session.Cancel(); break;
         }
+        Invalidate();   // 点击后立即反映状态（撤销/重做/切工具），不等鼠标移动
     }
 
-    private void ShowColorMenu(Point local)
+    /// <summary>弹出菜单贴工具条外侧：默认下方，放不下翻到上方——绝不遮挡工具条按钮。</summary>
+    private void ShowPopupBesideToolbar(ContextMenuStrip menu, Rectangle btn)
+    {
+        int gap = S(4);
+        var pt = new Point(btn.Left, _toolbarBounds.Bottom + gap);
+        menu.Show(this, pt);
+        // Show 之后才有真实尺寸：底边越界（下方放不下）则翻到工具条上方；横向收进屏内
+        if (menu.Bottom > ClientSize.Height)
+            menu.Top = Math.Max(0, _toolbarBounds.Y - menu.Height - gap);
+        if (menu.Right > ClientSize.Width) menu.Left = ClientSize.Width - menu.Width;
+        if (menu.Left < 0) menu.Left = 0;
+    }
+
+    private void ShowColorMenu(Rectangle btn)
     {
         if (_colorMenu == null)
         {
@@ -385,10 +494,10 @@ public sealed class CaptureOverlayForm : Form
                 _colorMenu.Items.Add(item);
             }
         }
-        _colorMenu.Show(this, local);
+        ShowPopupBesideToolbar(_colorMenu, btn);
     }
 
-    private void ShowWidthMenu(Point local)
+    private void ShowWidthMenu(Rectangle btn)
     {
         if (_widthMenu == null)
         {
@@ -401,7 +510,7 @@ public sealed class CaptureOverlayForm : Form
                 _widthMenu.Items.Add(item);
             }
         }
-        _widthMenu.Show(this, local);
+        ShowPopupBesideToolbar(_widthMenu, btn);
     }
 
     // ---- 文字标注编辑框 ----
