@@ -20,6 +20,13 @@ internal static class Program
                 Application.Run(new SettingsForm(AppSettings.Load()));
                 return 0;
 
+            case "shot":
+                // UI 冒烟入口：自动框选 + 6 秒自动退出，供截图脚本验证遮罩 UI
+                var shotSession = CaptureSession.Start(debug: true);
+                if (shotSession?.InteractiveForm != null)
+                    Application.Run(shotSession.InteractiveForm);
+                return 0;
+
             default:
                 break;
         }

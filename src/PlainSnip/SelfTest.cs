@@ -65,6 +65,24 @@ public static class SelfTest
             File.Delete(tmp);
         }
 
+        // ---- 选区跨屏合成（ScreenCapture.ComposeSelection，M4 复用） ----
+        {
+            using var red = new Bitmap(100, 100);
+            using (var g = Graphics.FromImage(red)) g.Clear(Color.Red);
+            using var blue = new Bitmap(100, 100);
+            using (var g = Graphics.FromImage(blue)) g.Clear(Color.Blue);
+            var shots = new List<ScreenCapture.ScreenShot>
+            {
+                new(new Rectangle(0, 0, 100, 100), red),
+                new(new Rectangle(100, 0, 100, 100), blue),
+            };
+            using var sel = ScreenCapture.ComposeSelection(shots, new Rectangle(50, 25, 100, 50));
+            bool ok = sel.Width == 100 && sel.Height == 50
+                && sel.GetPixel(10, 25).R > 200 && sel.GetPixel(10, 25).B < 60
+                && sel.GetPixel(90, 25).B > 200 && sel.GetPixel(90, 25).R < 60;
+            Check("跨屏选区合成（左右两屏拼图）", ok);
+        }
+
         // ---- 开机自启注册表可读（只读，不写） ----
         try
         {

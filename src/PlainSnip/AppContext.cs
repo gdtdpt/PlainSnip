@@ -60,13 +60,13 @@ public sealed class AppContext : ApplicationContext
 
     private void DoCapture()
     {
-        // M0 占位：M1（截图核心）在此实装全屏遮罩 + 框选
-        _tray.ShowBalloonTip(2000, "PlainSnip", "截图功能将在 M1（截图核心）提供。", ToolTipIcon.Info);
+        // M1a：快照冻结 + per-monitor 遮罩框选（§5.5）
+        CaptureSession.Start();
     }
 
     private void DoPin()
     {
-        // M0 占位：M2（贴图）在此实装置顶悬浮窗
+        // M0 占位：M2（贴图）在此实装置顶悬浮窗；接入后「贴图」也进截图工具条按钮列表
         if (Clipboard.ContainsImage())
             _tray.ShowBalloonTip(2000, "PlainSnip", "贴图功能将在 M2（贴图）提供。", ToolTipIcon.Info);
         else
