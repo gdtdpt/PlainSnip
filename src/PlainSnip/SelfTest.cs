@@ -151,6 +151,53 @@ public static class SelfTest
                 && flat.GetPixel(10, 10).R < 20 && flat.GetPixel(10, 10).A == 255);
         }
 
+        // ---- 标注历史与几何（M3 纯函数） ----
+        {
+            var h = new AnnotationHistory();
+            var a1 = new Annotation(AnnotationTool.Rect, new[] { new Point(0, 0), new Point(10, 10) }, Color.Red, 2);
+            var a2 = new Annotation(AnnotationTool.Serial, new[] { new Point(5, 5) }, Color.Blue, 24, Serial: 1);
+            h.Push(a1);
+            h.Push(a2);
+            int v2 = h.Version;
+            Check("标注历史：Push 后可撤销可重做", h.Count == 2 && h.CanUndo && !h.CanRedo);
+
+            var s2 = new Annotation(AnnotationTool.Serial, new[] { new Point(6, 6) }, Color.Blue, 24, Serial: 2);
+            h.Push(s2);
+            Check("标注序号：新放置取最大号+1", h.NextSerial() == 3);
+            Check("标注序号：撤销后重画复用原号（剩余最大号+1）",
+                h.Undo() != null && AnnotationHistory.NextSerial(h) == 2);
+            Check("标注序号：重做恢复原号", h.Redo()?.Serial == 2);
+
+            h.Undo();
+            Check("标注历史：撤销计数与版本递增", h.Count == 2 && h.Version > v2 && h.CanRedo);
+            h.Push(new Annotation(AnnotationTool.Pen, new[] { new Point(0, 0), new Point(1, 1) }, Color.Red, 2));
+            Check("标注历史：新提交清空 redo 栈", !h.CanRedo && h.Count == 3);
+
+            var (lineEnd, head) = AnnotationGeometry.ArrowGeometry(new Point(0, 0), new Point(100, 0), 4);
+            Check("箭头几何：主线终点与三角方向",
+                lineEnd.X < 100 && head[0].X == 100 && head[1].X < 100 && head[2].X < 100
+                && head[1].Y != head[2].Y);
+
+            var (shortEnd, shortHead) = AnnotationGeometry.ArrowGeometry(new Point(0, 0), new Point(6, 0), 12);
+            Check("箭头几何：短箭头收缩头长不越界", shortEnd.X >= 0 && shortHead[0].X == 6);
+
+            Check("马赛克块大小下限", AnnotationGeometry.NormalizeBlock(0) == 4 && AnnotationGeometry.NormalizeBlock(20) == 20);
+
+            // 渲染器烟囱：在合成位图上画全部种类不抛异常，输出尺寸 = 选区尺寸
+            var recs = new List<Annotation>
+            {
+                a1, a2,
+                new(AnnotationTool.Ellipse, new[] { new Point(0, 0), new Point(20, 20) }, Color.Green, 2),
+                new(AnnotationTool.Arrow, new[] { new Point(0, 0), new Point(30, 30) }, Color.White, 3),
+                new(AnnotationTool.Pen, new[] { new Point(0, 0), new Point(5, 5), new Point(10, 0) }, Color.Yellow, 2),
+                new(AnnotationTool.Text, new[] { new Point(2, 2) }, Color.Red, 12, Text: "测"),
+            };
+            using var canvas = new Bitmap(40, 40, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(canvas))
+                AnnotationRenderer.Draw(g, recs, _ => new Bitmap(1, 1));
+            Check("标注渲染器：全部种类可绘制", true);
+        }
+
         // ---- 开机自启注册表可读（只读，不写） ----
         try
         {

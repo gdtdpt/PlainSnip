@@ -21,11 +21,14 @@ public sealed class CaptureOverlayForm : Form
     private const int MagSrc = 16;
     private const int MagZoom = MagBox / MagSrc; // 9x
 
-    private static readonly string[] _toolbarButtonTexts = { "贴图", "复制", "保存", "取消" };
+    /// <summary>工具条按钮标识。</summary>
+    private enum ToolBtn { Select, Rect, Ellipse, Arrow, Pen, Text, Mosaic, Serial, Color, Width, Pin, Copy, Save, Cancel }
 
-    private Dictionary<string, Rectangle> _toolbarRects = new();
-    private Rectangle _toolbarBounds = Rectangle.Empty;
-    private string? _hoverButton;
+    private readonly List<(ToolBtn Id, Rectangle Rect)> _tbItems = new();
+    private Rectangle _toolbarBounds = Rectangle.Empty;   // 悬停隐藏放大镜用
+    private ToolBtn? _hoverBtn;
+    private TextBox? _textEditor;                         // 文字标注编辑框
+    private Point _textVirtual;
     private Point _cursorVirtual;                    // 光标虚拟桌面物理坐标
     private string? _colorCopiedFeedback;            // 取色复制提示
     private readonly System.Windows.Forms.Timer _feedbackTimer = new() { Interval = 1200 };
@@ -107,6 +110,19 @@ public sealed class CaptureOverlayForm : Form
             using var border = new Pen(Color.White, 1f);
             g.DrawRectangle(border, r.X, r.Y, r.Width - 1, r.Height - 1);
 
+            // 标注重放（屏幕显示：裁到选区∩本屏；与输出合成共用唯一渲染入口）
+            if (_session.History.Count > 0 || _session.Pending != null)
+            {
+                var st = g.Save();
+                g.SetClip(r);
+                g.TranslateTransform(-_screen.Bounds.X, -_screen.Bounds.Y);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                AnnotationRenderer.Draw(g, _session.History, _session.MosaicSample);
+                if (_session.Pending != null)
+                    AnnotationRenderer.Draw(g, new[] { _session.Pending }, _session.MosaicSample);
+                g.Restore(st);
+            }
+
             if (_interactive)
             {
                 if (_session.State == CaptureSession.SelState.Selected) DrawHandles(g, r);
@@ -184,11 +200,13 @@ public sealed class CaptureOverlayForm : Form
     private void DrawToolbar(Graphics g)
     {
         var selLocal = _session.SelectionLocal(_screen);
-        int btnH = S(38), margin = S(8), padX = S(18), gap = S(2);
+        int btnH = S(38), margin = S(8), padX = S(16), gap = S(2), iconBtn = S(36), sepW = S(10);
+        var textBtns = new[] { (ToolBtn.Pin, "贴图"), (ToolBtn.Copy, "复制"), (ToolBtn.Save, "保存"), (ToolBtn.Cancel, "取消") };
 
-        // 逐按钮测宽
-        _toolbarRects.Clear();
-        int total = _toolbarButtonTexts.Sum(b => TextRenderer.MeasureText(b, _uiFont).Width + padX * 2) + gap * (_toolbarButtonTexts.Length - 1) + S(8) * 2;
+        // 总宽：8 工具图标 + 分隔 + 颜色/线宽 2 图标 + 4 文字按钮
+        int total = S(8) * 2 + iconBtn * 10 + gap * 13 + sepW;
+        foreach (var (_, text) in textBtns) total += TextRenderer.MeasureText(text, _uiFont).Width + padX * 2 + gap;
+
         var tb = new Rectangle(selLocal.X, selLocal.Bottom + margin, total, btnH);
         if (tb.Bottom > ClientSize.Height) tb.Y = selLocal.Y - margin - btnH;      // 贴底翻转
         tb.X = Math.Clamp(tb.X, 0, Math.Max(0, ClientSize.Width - total));
@@ -197,25 +215,234 @@ public sealed class CaptureOverlayForm : Form
         using var bg = new SolidBrush(Color.FromArgb(225, 28, 28, 30));
         using var hoverBg = new SolidBrush(Color.FromArgb(255, 70, 130, 220));
         using var hoverBgPlain = new SolidBrush(Color.FromArgb(255, 64, 64, 68));
+        using var activeBg = new SolidBrush(Color.FromArgb(255, 40, 96, 170));
         g.FillRectangle(bg, tb);
 
+        _tbItems.Clear();
         int x = tb.X + S(8);
-        foreach (var text in _toolbarButtonTexts)
+
+        Rectangle AddBtn(ToolBtn id, int w, bool active, bool danger = false)
         {
-            int w = TextRenderer.MeasureText(text, _uiFont).Width + padX * 2;
             var rect = new Rectangle(x, tb.Y, w, btnH);
-            _toolbarRects[text] = rect;
-            if (_hoverButton == text)
-                g.FillRectangle(text == "取消" ? hoverBgPlain : hoverBg, rect);
+            _tbItems.Add((id, rect));
+            if (active) g.FillRectangle(activeBg, rect);
+            else if (_hoverBtn == id) g.FillRectangle(danger ? hoverBgPlain : hoverBg, rect);
+            x += w + gap;
+            return rect;
+        }
+
+        var tools = new[] { (ToolBtn.Select, AnnotationTool.None), (ToolBtn.Rect, AnnotationTool.Rect),
+            (ToolBtn.Ellipse, AnnotationTool.Ellipse), (ToolBtn.Arrow, AnnotationTool.Arrow),
+            (ToolBtn.Pen, AnnotationTool.Pen), (ToolBtn.Text, AnnotationTool.Text),
+            (ToolBtn.Mosaic, AnnotationTool.Mosaic), (ToolBtn.Serial, AnnotationTool.Serial) };
+        foreach (var (id, tool) in tools)
+            DrawToolIcon(g, id, AddBtn(id, iconBtn, _session.ActiveTool == tool));
+
+        using var sepPen = new Pen(Color.FromArgb(80, 255, 255, 255), 1f);
+        g.DrawLine(sepPen, x + sepW / 2, tb.Y + S(8), x + sepW / 2, tb.Bottom - S(8));
+        x += sepW;
+
+        DrawToolIcon(g, ToolBtn.Color, AddBtn(ToolBtn.Color, iconBtn, false));
+        DrawToolIcon(g, ToolBtn.Width, AddBtn(ToolBtn.Width, iconBtn, false));
+
+        foreach (var (id, text) in textBtns)
+        {
+            var rect = AddBtn(id, TextRenderer.MeasureText(text, _uiFont).Width + padX * 2, false,
+                danger: id == ToolBtn.Cancel);
             TextRenderer.DrawText(g, text, _uiFont, rect, Color.White,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-            x += w + gap;
         }
+    }
+
+    /// <summary>工具条图标（GDI 自绘，全部按 rect 居中）。</summary>
+    private void DrawToolIcon(Graphics g, ToolBtn id, Rectangle r)
+    {
+        using var pen = new Pen(Color.White, 1.6f);
+        int cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
+        switch (id)
+        {
+            case ToolBtn.Select:
+            {
+                using var fill = new SolidBrush(Color.White);
+                g.FillPolygon(fill, new[]
+                {
+                    new Point(cx - 4, cy - 7), new Point(cx - 4, cy + 7), new Point(cx - 1, cy + 3),
+                    new Point(cx + 2, cy + 7), new Point(cx + 4, cy + 5), new Point(cx + 1, cy + 2),
+                });
+                break;
+            }
+            case ToolBtn.Rect:
+                g.DrawRectangle(pen, cx - 8, cy - 6, 16, 12);
+                break;
+            case ToolBtn.Ellipse:
+                g.DrawEllipse(pen, cx - 8, cy - 6, 16, 12);
+                break;
+            case ToolBtn.Arrow:
+            {
+                g.DrawLine(pen, cx - 8, cy + 6, cx + 2, cy - 4);
+                using var fill = new SolidBrush(Color.White);
+                g.FillPolygon(fill, new[]
+                {
+                    new Point(cx + 8, cy - 8), new Point(cx - 1, cy - 5), new Point(cx + 5, cy + 1),
+                });
+                break;
+            }
+            case ToolBtn.Pen:
+            {
+                using var thick = new Pen(Color.White, 3f);
+                g.DrawLine(thick, cx - 5, cy + 5, cx + 5, cy - 5);
+                g.FillRectangle(Brushes.White, cx - 8, cy + 5, 4, 4);
+                break;
+            }
+            case ToolBtn.Text:
+                TextRenderer.DrawText(g, "文", _uiFont, r, Color.White,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                break;
+            case ToolBtn.Mosaic:
+            {
+                int s2 = S(7), o = S(2);
+                using var dim = new SolidBrush(Color.FromArgb(150, 255, 255, 255));
+                g.FillRectangle(Brushes.White, cx - s2 - o, cy - s2 - o, s2, s2);
+                g.FillRectangle(dim, cx + o, cy - s2 - o, s2, s2);
+                g.FillRectangle(dim, cx - s2 - o, cy + o, s2, s2);
+                g.FillRectangle(Brushes.White, cx + o, cy + o, s2, s2);
+                break;
+            }
+            case ToolBtn.Serial:
+            {
+                int d = S(18);
+                using var fill = new SolidBrush(Color.FromArgb(255, 0, 120, 215));
+                g.FillEllipse(fill, cx - d / 2, cy - d / 2, d, d);
+                TextRenderer.DrawText(g, "1", _uiFont, r, Color.White,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                break;
+            }
+            case ToolBtn.Color:
+            {
+                int s2 = S(14);
+                using var fill = new SolidBrush(_session.StrokeColor);
+                var rect = new Rectangle(cx - s2 / 2, cy - s2 / 2, s2, s2);
+                g.FillRectangle(fill, rect);
+                g.DrawRectangle(pen, rect);
+                break;
+            }
+            case ToolBtn.Width:
+            {
+                int w2 = S(18);
+                using var thick = new Pen(Color.White, Math.Clamp(_session.StrokeWidth, 2, 10));
+                g.DrawLine(thick, cx - w2 / 2, cy, cx + w2 / 2, cy);
+                break;
+            }
+        }
+    }
+
+    private ToolBtn? HitToolbar(Point local)
+    {
+        foreach (var (id, rect) in _tbItems)
+            if (rect.Contains(local)) return id;
+        return null;
+    }
+
+    private void HandleToolbarClick(ToolBtn id, MouseEventArgs e)
+    {
+        switch (id)
+        {
+            case ToolBtn.Select: _session.SetTool(AnnotationTool.None); break;
+            case ToolBtn.Rect: _session.SetTool(AnnotationTool.Rect); break;
+            case ToolBtn.Ellipse: _session.SetTool(AnnotationTool.Ellipse); break;
+            case ToolBtn.Arrow: _session.SetTool(AnnotationTool.Arrow); break;
+            case ToolBtn.Pen: _session.SetTool(AnnotationTool.Pen); break;
+            case ToolBtn.Text: _session.SetTool(AnnotationTool.Text); break;
+            case ToolBtn.Mosaic: _session.SetTool(AnnotationTool.Mosaic); break;
+            case ToolBtn.Serial: _session.SetTool(AnnotationTool.Serial); break;
+            case ToolBtn.Color: ShowColorMenu(e.Location); break;
+            case ToolBtn.Width: ShowWidthMenu(e.Location); break;
+            case ToolBtn.Pin: _session.PinSelection(); break;
+            case ToolBtn.Copy: _session.CopySelection(); break;
+            case ToolBtn.Save: _session.SaveSelection(); break;
+            case ToolBtn.Cancel: _session.Cancel(); break;
+        }
+    }
+
+    private void ShowColorMenu(Point local)
+    {
+        var menu = new ContextMenuStrip();
+        (string Name, Color C)[] colors =
+        {
+            ("红色", Color.Red), ("橙色", Color.Orange), ("绿色", Color.LimeGreen),
+            ("蓝色", Color.DodgerBlue), ("白色", Color.White), ("黑色", Color.Black),
+        };
+        foreach (var (name, c) in colors)
+        {
+            double lum = (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) / 255;
+            var item = new ToolStripMenuItem(name) { BackColor = c, ForeColor = lum > 0.5 ? Color.Black : Color.White };
+            var cc = c;
+            item.Click += (_, _) => _session.SetStrokeColor(cc);
+            menu.Items.Add(item);
+        }
+        menu.Closed += (_, _) => menu.Dispose();
+        menu.Show(this, local);
+    }
+
+    private void ShowWidthMenu(Point local)
+    {
+        var menu = new ContextMenuStrip();
+        foreach (var (name, logical) in new[] { ("细", 2), ("中", 4), ("粗", 8) })
+        {
+            var item = new ToolStripMenuItem($"{name}（{logical}px）");
+            int px = S(logical);
+            item.Click += (_, _) => _session.SetStrokeWidth(px);
+            menu.Items.Add(item);
+        }
+        menu.Closed += (_, _) => menu.Dispose();
+        menu.Show(this, local);
+    }
+
+    // ---- 文字标注编辑框 ----
+
+    private void OpenTextEditor(Point v, Point local)
+    {
+        CloseTextEditor(commit: false);
+        int fontPx = Math.Max(12, _session.TextSize);
+        _textEditor = new TextBox
+        {
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.FromArgb(245, 245, 245),
+            ForeColor = _session.StrokeColor.GetBrightness() > 0.35f ? Color.Black : _session.StrokeColor,
+            Font = new Font("Microsoft YaHei UI", fontPx, GraphicsUnit.Pixel),
+            Location = new Point(local.X, local.Y - fontPx / 2),
+            Width = S(220),
+        };
+        _textEditor.Height = fontPx + S(12);
+        _textVirtual = v;
+        _textEditor.KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; CloseTextEditor(commit: true); }
+            else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; CloseTextEditor(commit: false); }
+        };
+        _textEditor.LostFocus += (s, e) => CloseTextEditor(commit: true);
+        Controls.Add(_textEditor);
+        _textEditor.BringToFront();
+        _textEditor.Focus();
+        Invalidate();
+    }
+
+    private void CloseTextEditor(bool commit)
+    {
+        if (_textEditor == null) return;
+        var editor = _textEditor;
+        _textEditor = null;   // 先清引用，防 LostFocus→Dispose 重入
+        string? text = commit ? editor.Text.Trim() : null;
+        editor.Dispose();
+        if (!string.IsNullOrEmpty(text)) _session.CommitText(_textVirtual, text);
+        Invalidate();
     }
 
     private void DrawMagnifier(Graphics g)
     {
         var cur = LocalFromVirtual(_cursorVirtual);
+        // 绘制标注 / 文字编辑中不画放大镜（不遮挡笔画）
+        if (_session.State == CaptureSession.SelState.Annotating || _textEditor != null) return;
         // 光标不在本屏内则不画
         if (!ClientRectangle.Contains(cur)) return;
         // 光标悬停工具条时隐藏放大镜
@@ -319,18 +546,20 @@ public sealed class CaptureOverlayForm : Form
         // 工具条按钮
         if (_session.State == CaptureSession.SelState.Selected)
         {
-            foreach (var text in _toolbarButtonTexts)
+            var btn = HitToolbar(e.Location);
+            if (btn != null) { HandleToolbarClick(btn.Value, e); return; }
+        }
+
+        // 标注工具（激活时优先于手柄/移动；点选区内即开始）
+        if (_session.State == CaptureSession.SelState.Selected && _session.ActiveTool != AnnotationTool.None
+            && _session.SelectionLocal(_screen).Contains(e.Location))
+        {
+            if (_textEditor != null) { CloseTextEditor(commit: true); return; }   // 先提交正在编辑的文字
+            switch (_session.ActiveTool)
             {
-                if (_toolbarRects.TryGetValue(text, out var rect) && rect.Contains(e.Location))
-                {
-                    switch (text)
-                    {
-                        case "贴图": _session.PinSelection(); return;
-                        case "复制": _session.CopySelection(); return;
-                        case "保存": _session.SaveSelection(); return;
-                        case "取消": _session.Cancel(); return;
-                    }
-                }
+                case AnnotationTool.Text: OpenTextEditor(v, e.Location); return;
+                case AnnotationTool.Serial: _session.CommitSerial(v); return;
+                default: _session.BeginAnnotate(_session.ActiveTool, v); return;
             }
         }
 
@@ -375,18 +604,25 @@ public sealed class CaptureOverlayForm : Form
         // 光标形状
         Cursor = _session.State switch
         {
-            CaptureSession.SelState.Selected when _toolbarBounds.Contains(local) && HoverButton(local) != null => Cursors.Hand,
+            CaptureSession.SelState.Selected when _toolbarBounds.Contains(local) && HitToolbar(local) != null => Cursors.Hand,
             CaptureSession.SelState.Selected when HandleHitTest(local) >= 0 => _handleCursors[HandleHitTest(local)],
-            CaptureSession.SelState.Selected when _session.SelectionLocal(_screen).Contains(local) => Cursors.SizeAll,
+            CaptureSession.SelState.Selected when _session.SelectionLocal(_screen).Contains(local)
+                && _session.ActiveTool == AnnotationTool.None => Cursors.SizeAll,
             _ => Cursors.Cross,
         };
 
         // 工具条悬停高亮
-        string? hover = HoverButton(local);
-        if (hover != _hoverButton)
+        var hover = HitToolbar(local);
+        if (hover != _hoverBtn)
         {
-            _hoverButton = hover;
+            _hoverBtn = hover;
             Invalidate();
+        }
+
+        if (_session.State == CaptureSession.SelState.Annotating)
+        {
+            _session.UpdateAnnotate(v);
+            return;
         }
 
         if (_session.State == CaptureSession.SelState.PendingConfirm)
@@ -414,14 +650,11 @@ public sealed class CaptureOverlayForm : Form
 
     private int _lastHoverTick;
 
-    /// <summary>把本屏 DPI 换算的拖动阈值交给会话（会话 Begin 后调用一次）。</summary>
-    internal void SyncDpiToSession() => _session.SetDragThreshold(S(4));
-
-    private string? HoverButton(Point local)
+    /// <summary>把本屏 DPI 换算的拖动阈值与标注默认尺寸交给会话（会话 Begin 后调用一次）。</summary>
+    internal void SyncDpiToSession()
     {
-        foreach (var text in _toolbarButtonTexts)
-            if (_toolbarRects.TryGetValue(text, out var rect) && rect.Contains(local)) return text;
-        return null;
+        _session.SetDragThreshold(S(4));
+        _session.SetUiScale(S(3), S(16), S(24), S(8));
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -429,7 +662,9 @@ public sealed class CaptureOverlayForm : Form
         base.OnMouseUp(e);
         if (e.Button == MouseButtons.Left)
         {
-            if (_session.State == CaptureSession.SelState.PendingConfirm)
+            if (_session.State == CaptureSession.SelState.Annotating)
+                _session.EndAnnotate();
+            else if (_session.State == CaptureSession.SelState.PendingConfirm)
                 _session.ConfirmHover();
             else
                 _session.EndInteraction();
@@ -439,6 +674,8 @@ public sealed class CaptureOverlayForm : Form
     protected override void OnMouseDoubleClick(MouseEventArgs e)
     {
         base.OnMouseDoubleClick(e);
+        // 标注工具激活时双击是绘制动作，不复制
+        if (_session.ActiveTool != AnnotationTool.None) return;
         // WinForms 双击序列：Down/Up/Down/DoubleClick/Up——第二次 Down 已把状态切成 Moving，
         // 此处先收敛回 Selected 再复制，否则条件永不成立（双击复制失效）。
         if (e.Button == MouseButtons.Left
@@ -453,13 +690,29 @@ public sealed class CaptureOverlayForm : Form
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (_textEditor != null) return;   // 文字编辑中，按键归编辑框
+
         switch (e.KeyCode)
         {
             case Keys.Escape:
-                _session.Cancel();
+                // 绘制中 → 取消当前笔；否则取消整个截图（M1a 肌肉记忆）
+                if (_session.Pending != null) { _session.CancelPendingAnnotation(); e.Handled = true; }
+                else _session.Cancel();
                 break;
             case Keys.Enter:
                 _session.CopySelection();
+                break;
+            case Keys.Z when e.Control && e.Shift:
+                _session.Redo();
+                e.Handled = true;
+                break;
+            case Keys.Z when e.Control:
+                _session.Undo();
+                e.Handled = true;
+                break;
+            case Keys.Y when e.Control:
+                _session.Redo();
+                e.Handled = true;
                 break;
             case Keys.C when _session.State is CaptureSession.SelState.Idle or CaptureSession.SelState.Selected:
                 // 取色复制（Snipaste 键位）；点击放大镜不可达——放大镜永远偏移光标 24px 跟随
@@ -534,6 +787,7 @@ public sealed class CaptureOverlayForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         base.OnFormClosed(e);
+        CloseTextEditor(commit: false);
         _uiFont.Dispose();
         _feedbackTimer.Stop();
         _feedbackTimer.Dispose();

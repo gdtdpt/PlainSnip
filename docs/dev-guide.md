@@ -53,7 +53,8 @@ src/PlainSnip/            主工程（net8.0-windows WinForms）
   IconFactory.cs          从嵌入资源加载 App.ico（托盘/窗体图标）
   ScreenCapture.cs        屏幕捕获服务（BitBlt 快照/区域 + 跨屏选区合成；M4 分帧复用）
   CaptureSession.cs       截图会话状态机（选区统一记录为虚拟桌面物理坐标）
-  CaptureOverlayForm.cs   per-monitor 全屏遮罩窗（框选/手柄/放大镜/工具条/悬停预选）
+  CaptureOverlayForm.cs   per-monitor 全屏遮罩窗（框选/手柄/放大镜/工具条/悬停预选/标注交互）
+  Annotation.cs           标注记录 + 历史栈 + 箭头几何 + 唯一渲染入口 AnnotationRenderer（§5.8）
   WindowDetector.cs       窗口自动检测（EnumWindows Z 序 + PID 过滤 + DWM 边界 + 子窗口下钻启发式）
   PinGeometry.cs          贴图几何纯函数（缩放锚点/夹取/初始摆放/alpha 压平）
   PinWindow.cs            贴图窗（LWA_ALPHA 透明度、滚轮缩放、右键菜单、鼠标穿透）
@@ -84,6 +85,6 @@ dist/                     产物（gitignore）
 - [x] **M1a 截图核心**（2026-10-29）：快照冻结 + 遮罩框选 + 8 手柄 + 放大镜取色 + 工具条
 - [x] **M1b 窗口检测**（2026-10-29）：两级检测 + 悬停预选 + 单击/拖动分型（真机验收通过）
 - [x] **M2 贴图**（2026-10-29）：PinWindow/PinManager + F3/工具条/托盘三入口 + 冒烟
-- [ ] M3 标注精简版
+- [x] **M3 标注精简版**（2026-10-29）：七工具烙定式标注（记录栈 + 单一渲染入口 + 输出版本缓存）
 - [ ] M4 滚动截图（前置：拼接算法设计文档 + ShareX ScrollingCapture 研读）
 - [ ] M5 v1.5 增强

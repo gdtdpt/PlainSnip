@@ -9,7 +9,7 @@ namespace PlainSnip;
 /// </summary>
 public sealed class CaptureSession : IDisposable
 {
-    public enum SelState { Idle, PendingConfirm, Dragging, Resizing, Moving, Selected }
+    public enum SelState { Idle, PendingConfirm, Dragging, Resizing, Moving, Selected, Annotating }
 
     private List<ScreenCapture.ScreenShot> _shots = new();
     private readonly List<CaptureOverlayForm> _overlays = new();
@@ -17,6 +17,19 @@ public sealed class CaptureSession : IDisposable
     private static CaptureSession? _current;
     private Point _confirmAnchor;               // PendingConfirm 按下锚点
     private int _dragThreshold = 4;             // 拖动判定阈值（物理像素，遮罩窗按 DPI 设定）
+
+    // ---- 标注（M3）----
+    private readonly AnnotationHistory _history = new();
+    private Annotation? _pending;               // 绘制中的记录（Annotating 态）
+    private AnnotationTool _activeTool = AnnotationTool.None;
+    private Color _strokeColor = Color.Red;
+    private int _strokeWidth = 6;               // 物理像素（遮罩窗 SyncDpi 时按本屏 DPI 修正）
+    private int _textSize = 24;                 // 文字字号（物理像素）
+    private int _serialDiameter = 36;           // 序号徽章直径（物理像素）
+    private int _mosaicBlock = 16;              // 马赛克块（物理像素）
+    private Bitmap? _composeCache;              // 输出合成缓存
+    private int _cacheVersion = -1;
+    private Rectangle _cacheSel;
 
     public SelState State { get; private set; } = SelState.Idle;
     public Rectangle Selection { get; private set; }    // 虚拟桌面物理坐标
@@ -26,6 +39,15 @@ public sealed class CaptureSession : IDisposable
     public Rectangle DragOrigSel { get; private set; }  // 拖动开始时的选区
     public bool DebugMode { get; init; }                // --shot 冒烟：自动框选 + 定时退出
     public bool DebugHover { get; init; }               // --hover 冒烟：按光标位置预选 + 定时退出
+
+    // ---- 标注状态暴露（M3）----
+    public AnnotationHistory History => _history;
+    public Annotation? Pending => _pending;
+    public AnnotationTool ActiveTool => _activeTool;
+    public Color StrokeColor => _strokeColor;
+    public int StrokeWidth => _strokeWidth;
+    public int TextSize => _textSize;
+    public int SerialDiameter => _serialDiameter;
 
     public IReadOnlyList<ScreenCapture.ScreenShot> Shots => _shots;
     public CaptureOverlayForm? Interactive => _interactive;
@@ -72,6 +94,18 @@ public sealed class CaptureSession : IDisposable
                 Selection = new Rectangle(b.X + b.Width * 3 / 10, b.Y + b.Height * 3 / 10,
                     b.Width * 2 / 5, b.Height * 2 / 5);
                 State = SelState.Selected;
+
+                // 预置演示标注（M3 渲染冒烟）：矩形 + 序号 + 文字
+                var r = new Rectangle(Selection.X + Selection.Width * 3 / 10, Selection.Y + Selection.Height * 3 / 10,
+                    Selection.Width * 2 / 5, Selection.Height * 2 / 5);
+                _history.Push(new Annotation(AnnotationTool.Rect,
+                    new[] { r.Location, new Point(r.Right, r.Bottom) }, Color.Red, 6));
+                _history.Push(new Annotation(AnnotationTool.Serial,
+                    new[] { new Point(Selection.X + Selection.Width * 8 / 10, Selection.Y + Selection.Height * 2 / 10) },
+                    Color.FromArgb(255, 0, 120, 215), Math.Max(24, Selection.Height / 18), Serial: 1));
+                _history.Push(new Annotation(AnnotationTool.Text,
+                    new[] { new Point(Selection.X + Selection.Width / 10, Selection.Y + Selection.Height * 8 / 10) },
+                    Color.FromArgb(255, 255, 200, 0), Math.Max(18, Selection.Height / 30), Text: "M3 标注演示"));
                 RefreshAll();
             }
             var t = new System.Windows.Forms.Timer { Interval = 6000 };
@@ -215,10 +249,168 @@ public sealed class CaptureSession : IDisposable
 
     public void Cancel() => Close();
 
+    // ---- 标注操作（M3，由遮罩窗输入事件驱动）----
+
+    /// <summary>遮罩窗按本屏 DPI 修正标注默认尺寸（物理像素，Begin 后调用一次）。</summary>
+    public void SetUiScale(int stroke, int text, int serial, int mosaic)
+    {
+        _strokeWidth = Math.Max(2, stroke);
+        _textSize = Math.Max(12, text);
+        _serialDiameter = Math.Max(20, serial);
+        _mosaicBlock = Math.Max(8, mosaic);
+    }
+
+    /// <summary>切换激活工具（再次点击同一工具 = 取消，回到选择态）。</summary>
+    public void SetTool(AnnotationTool tool)
+    {
+        _activeTool = _activeTool == tool ? AnnotationTool.None : tool;
+        RefreshAll();
+    }
+
+    public void SetStrokeColor(Color c) { _strokeColor = c; RefreshAll(); }
+
+    public void SetStrokeWidth(int px) { _strokeWidth = Math.Max(1, px); RefreshAll(); }
+
+    /// <summary>开始一笔拖动型标注（Rect/Ellipse/Arrow/Pen/Mosaic）。</summary>
+    public void BeginAnnotate(AnnotationTool tool, Point v)
+    {
+        if (_activeTool == AnnotationTool.None || Selection.IsEmpty) return;
+        _pending = tool switch
+        {
+            AnnotationTool.Rect or AnnotationTool.Ellipse or AnnotationTool.Mosaic
+                or AnnotationTool.Arrow or AnnotationTool.Pen
+                => new Annotation(tool, new[] { v, v }, _strokeColor, _strokeWidth, Block: _mosaicBlock),
+            _ => null,   // Text/Serial 是单击型，不走这里
+        };
+        if (_pending == null) return;
+        State = SelState.Annotating;
+        RefreshAll();
+    }
+
+    public void UpdateAnnotate(Point v)
+    {
+        if (State != SelState.Annotating || _pending == null) return;
+        var pts = _pending.Points;
+        if (_pending.Kind == AnnotationTool.Pen)
+        {
+            var last = pts[^1];
+            if (Math.Abs(v.X - last.X) + Math.Abs(v.Y - last.Y) < 2) return;   // 采点间距阈值
+            _pending = _pending with { Points = pts.Append(v).ToArray() };
+        }
+        else
+        {
+            _pending = _pending with { Points = new[] { pts[0], v } };
+        }
+        RefreshAll();
+    }
+
+    /// <summary>一笔结束：有效则烙定进栈（清空 redo），过小视为误触丢弃。</summary>
+    public void EndAnnotate()
+    {
+        if (State != SelState.Annotating || _pending == null) return;
+        var rec = _pending;
+        _pending = null;
+        State = SelState.Selected;
+
+        bool ok = rec.Kind switch
+        {
+            AnnotationTool.Rect or AnnotationTool.Ellipse or AnnotationTool.Mosaic
+                => rec.Bounds().Width >= 3 && rec.Bounds().Height >= 3,
+            AnnotationTool.Arrow or AnnotationTool.Pen => rec.Points.Length >= 2
+                && Math.Abs(rec.Points[^1].X - rec.Points[0].X)
+                + Math.Abs(rec.Points[^1].Y - rec.Points[0].Y) >= 3,
+            _ => false,
+        };
+        if (ok) _history.Push(rec);
+        RefreshAll();
+    }
+
+    /// <summary>Esc 取消当前这一笔（不进栈）。</summary>
+    public void CancelPendingAnnotation()
+    {
+        if (_pending == null) return;
+        _pending = null;
+        if (State == SelState.Annotating) State = SelState.Selected;
+        RefreshAll();
+    }
+
+    public void CommitText(Point v, string text)
+    {
+        if (Selection.IsEmpty || string.IsNullOrWhiteSpace(text)) return;
+        _history.Push(new Annotation(AnnotationTool.Text, new[] { v }, _strokeColor, _textSize, Text: text));
+        RefreshAll();
+    }
+
+    public void CommitSerial(Point v)
+    {
+        if (Selection.IsEmpty) return;
+        _history.Push(new Annotation(AnnotationTool.Serial, new[] { v }, _strokeColor, _serialDiameter,
+            Serial: _history.NextSerial()));
+        RefreshAll();
+    }
+
+    public void Undo()
+    {
+        if (_history.Undo() != null) RefreshAll();
+    }
+
+    public void Redo()
+    {
+        if (_history.Redo() != null) RefreshAll();
+    }
+
+    /// <summary>马赛克取样：给定虚拟矩形，从底图快照「缩小-最近邻放大」出像素化位图（调用方 Dispose）。跨屏时各屏分别取样拼合。</summary>
+    public Bitmap MosaicSample(Rectangle rect)
+    {
+        int block = AnnotationGeometry.NormalizeBlock(_mosaicBlock);
+        var bmp = new Bitmap(rect.Width, rect.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(bmp);
+        foreach (var shot in _shots)
+        {
+            var inter = Rectangle.Intersect(rect, shot.Bounds);
+            if (inter.IsEmpty) continue;
+            int bw = Math.Max(1, inter.Width / block), bh = Math.Max(1, inter.Height / block);
+            using var small = new Bitmap(bw, bh, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var sg = Graphics.FromImage(small))
+            {
+                sg.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                sg.DrawImage(shot.Bitmap, new Rectangle(0, 0, bw, bh),
+                    new Rectangle(inter.X - shot.Bounds.X, inter.Y - shot.Bounds.Y, inter.Width, inter.Height),
+                    GraphicsUnit.Pixel);
+            }
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+            g.DrawImage(small, new Rectangle(inter.X - rect.X, inter.Y - rect.Y, inter.Width, inter.Height),
+                0, 0, bw, bh, GraphicsUnit.Pixel);
+        }
+        return bmp;
+    }
+
+    /// <summary>合成选区输出（底图 + 标注），按标注栈版本缓存。返回克隆（调用方 Dispose）。</summary>
+    public Bitmap ComposeOutput()
+    {
+        if (_composeCache == null || _cacheVersion != _history.Version || _cacheSel != Selection)
+        {
+            _composeCache?.Dispose();
+            _composeCache = ScreenCapture.ComposeSelection(_shots, Selection);
+            if (_history.Count > 0)
+            {
+                using var g = Graphics.FromImage(_composeCache);
+                g.SetClip(new Rectangle(0, 0, Selection.Width, Selection.Height));
+                g.TranslateTransform(-Selection.X, -Selection.Y);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                AnnotationRenderer.Draw(g, _history, MosaicSample);
+            }
+            _cacheVersion = _history.Version;
+            _cacheSel = Selection;
+        }
+        return (Bitmap)_composeCache.Clone();
+    }
+
     public void CopySelection()
     {
         if (State != SelState.Selected || Selection.IsEmpty) return;
-        using var bmp = ScreenCapture.ComposeSelection(_shots, Selection);
+        using var bmp = ComposeOutput();
         try
         {
             Clipboard.SetImage(bmp);
@@ -230,11 +422,11 @@ public sealed class CaptureSession : IDisposable
         Close();
     }
 
-    /// <summary>把当前选区钉成贴图（M2）：先关遮罩再建贴图窗，贴在选区原位置。</summary>
+    /// <summary>把当前选区钉成贴图（M2）：先关遮罩再建贴图窗，贴在选区原位置。标注随图带出。</summary>
     public void PinSelection()
     {
         if (State != SelState.Selected || Selection.IsEmpty) return;
-        using var bmp = ScreenCapture.ComposeSelection(_shots, Selection);
+        using var bmp = ComposeOutput();
         var at = Selection.Location;
         Close();
         PinManager.Current.Create(bmp, at);
@@ -243,7 +435,7 @@ public sealed class CaptureSession : IDisposable
     public void SaveSelection()
     {
         if (State != SelState.Selected || Selection.IsEmpty || _interactive == null) return;
-        using var bmp = ScreenCapture.ComposeSelection(_shots, Selection);
+        using var bmp = ComposeOutput();
         using var dlg = new SaveFileDialog
         {
             Filter = "PNG 图片|*.png|JPEG 图片|*.jpg|BMP 图片|*.bmp",
@@ -278,6 +470,10 @@ public sealed class CaptureSession : IDisposable
         _shots.Clear();
         _overlays.Clear();
         _interactive = null;
+        _composeCache?.Dispose();
+        _composeCache = null;
+        _cacheVersion = -1;
+        _pending = null;
     }
 
     public void RefreshAll()
