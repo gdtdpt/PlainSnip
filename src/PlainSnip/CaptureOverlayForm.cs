@@ -252,28 +252,34 @@ public sealed class CaptureOverlayForm : Form
         g.DrawLine(cross, cx - S(12), cy, cx + S(12), cy);
         g.DrawLine(cross, cx, cy - S(12), cx, cy + S(12));
 
-        // 取色信息条
+        // 取色信息条（值 + 操作提示；格式由 Shift 切换）
         if (cur.X >= 0 && cur.X < _snap.Width && cur.Y >= 0 && cur.Y < _snap.Height)
         {
             Color px = _snap.GetPixel(Math.Clamp(cur.X, 0, _snap.Width - 1), Math.Clamp(cur.Y, 0, _snap.Height - 1));
-            string info = $"#{px.R:X2}{px.G:X2}{px.B:X2}   {px.R}, {px.G}, {px.B}";
-            var size = TextRenderer.MeasureText(info, _uiFont);
-            var box = new Rectangle(magX, magY + MagBox + S(4), Math.Max(size.Width + S(12), MagBox), size.Height + S(4));
+            string value = _colorFormatHex
+                ? $"#{px.R:X2}{px.G:X2}{px.B:X2}"
+                : $"{px.R}, {px.G}, {px.B}";
+            const string hint = "C 复制 · Shift 切换";
+            var vSize = TextRenderer.MeasureText(value, _uiFont);
+            var hSize = TextRenderer.MeasureText(hint, _uiFont);
+            var box = new Rectangle(magX, magY + MagBox + S(4),
+                Math.Max(Math.Max(vSize.Width, hSize.Width) + S(12), MagBox),
+                vSize.Height + hSize.Height + S(6));
             using var bg = new SolidBrush(Color.FromArgb(210, 20, 20, 20));
             g.FillRectangle(bg, box);
             using var swatchBrush = new SolidBrush(px);
             var swatchRect = new Rectangle(box.X + S(6), box.Y + S(2), box.Height - S(4), box.Height - S(4));
             g.FillRectangle(swatchBrush, swatchRect);
             g.DrawRectangle(border, swatchRect);
-            TextRenderer.DrawText(g, info, _uiFont, new Rectangle(box.X + box.Height, box.Y, box.Width - box.Height, box.Height),
+            int textX = box.X + box.Height;
+            TextRenderer.DrawText(g, value, _uiFont, new Rectangle(textX, box.Y, box.Right - textX, vSize.Height),
                 Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
-            _magRect = box;
+            TextRenderer.DrawText(g, hint, _uiFont, new Rectangle(textX, box.Y + vSize.Height, box.Right - textX, hSize.Height),
+                Color.FromArgb(170, 255, 255, 255), TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
             if (_colorCopiedFeedback != null)
                 TextRenderer.DrawText(g, _colorCopiedFeedback, _uiFont, new Point(magX, box.Bottom + S(4)), Color.FromArgb(180, 255, 230, 120));
         }
     }
-
-    private Rectangle _magRect = Rectangle.Empty;
 
     // ---- 输入 ----
 
@@ -302,8 +308,6 @@ public sealed class CaptureOverlayForm : Form
                     }
                 }
             }
-            // 放大镜取色复制
-            if (_magRect.Contains(e.Location)) { CopyColorAtCursor(); return; }
         }
 
         int handle = HandleHitTest(e.Location);
@@ -348,7 +352,6 @@ public sealed class CaptureOverlayForm : Form
         Cursor = _session.State switch
         {
             CaptureSession.SelState.Selected when _toolbarBounds.Contains(local) && HoverButton(local) != null => Cursors.Hand,
-            CaptureSession.SelState.Selected when _magRect.Contains(local) => Cursors.Hand,
             CaptureSession.SelState.Selected when HandleHitTest(local) >= 0 => _handleCursors[HandleHitTest(local)],
             CaptureSession.SelState.Selected when _session.SelectionLocal(_screen).Contains(local) => Cursors.SizeAll,
             _ => Cursors.Cross,
@@ -434,6 +437,11 @@ public sealed class CaptureOverlayForm : Form
             case Keys.Enter:
                 _session.CopySelection();
                 break;
+            case Keys.C when _session.State is CaptureSession.SelState.Idle or CaptureSession.SelState.Selected:
+                // 取色复制（Snipaste 键位）；点击放大镜不可达——放大镜永远偏移光标 24px 跟随
+                CopyColorAtCursor();
+                e.Handled = true;
+                break;
             case Keys.Up or Keys.Down or Keys.Left or Keys.Right when _session.State == CaptureSession.SelState.Selected && !_session.Selection.IsEmpty:
                 int step = e.Shift ? 10 : 1;
                 var d = e.KeyCode switch
@@ -448,18 +456,45 @@ public sealed class CaptureOverlayForm : Form
                 _session.BeginMove(orig.Location);
                 _session.UpdateDrag(orig.Location + d);
                 _session.EndInteraction();
+                if (e.Shift) _shiftSeenWithOtherKey = true;   // 抑制松开 Shift 时翻转取色格式
                 e.Handled = true;
                 break;
         }
     }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+        // Shift 切换取色格式放 KeyUp：KeyDown 会因按住自动重复而连续翻转
+        if (e.KeyCode is Keys.ShiftKey or Keys.LShiftKey or Keys.RShiftKey
+            && _session.State is CaptureSession.SelState.Idle or CaptureSession.SelState.Selected)
+        {
+            if (_shiftSeenWithOtherKey)
+            {
+                _shiftSeenWithOtherKey = false;   // 组合键（如 Shift+方向键微调）后不翻转
+            }
+            else
+            {
+                _colorFormatHex = !_colorFormatHex;
+                Invalidate();
+            }
+        }
+    }
+
+    private bool _shiftSeenWithOtherKey;
+
+    private bool _colorFormatHex = true;
 
     private void CopyColorAtCursor()
     {
         var cur = LocalFromVirtual(_cursorVirtual);
         if (cur.X < 0 || cur.X >= _snap.Width || cur.Y < 0 || cur.Y >= _snap.Height) return;
         Color px = _snap.GetPixel(cur.X, cur.Y);
-        try { Clipboard.SetText($"#{px.R:X2}{px.G:X2}{px.B:X2}"); } catch (ExternalException) { }
-        _colorCopiedFeedback = $"已复制 #{px.R:X2}{px.G:X2}{px.B:X2}";
+        string text = _colorFormatHex
+            ? $"#{px.R:X2}{px.G:X2}{px.B:X2}"
+            : $"{px.R}, {px.G}, {px.B}";
+        try { Clipboard.SetText(text); } catch (ExternalException) { }
+        _colorCopiedFeedback = $"已复制 {text}";
         _feedbackTimer.Start();
         Invalidate();
     }
