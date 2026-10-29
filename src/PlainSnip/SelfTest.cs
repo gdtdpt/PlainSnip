@@ -29,6 +29,19 @@ public static class SelfTest
 
         Check("DPI 模式 = PerMonitorV2", Application.HighDpiMode == HighDpiMode.PerMonitorV2);
 
+        // ---- 嵌入图标资源（App.ico 多尺寸） ----
+        {
+            using var stream = typeof(IconFactory).Assembly.GetManifestResourceStream("PlainSnip.App.ico");
+            bool ok = stream != null && stream.Length > 1000;
+            if (ok)
+            {
+                var size = SystemInformation.SmallIconSize;
+                using var icon = new Icon(stream!, size.Width, size.Height);
+                ok = icon.Width > 0 && icon.Height > 0;
+            }
+            Check("嵌入图标资源加载（App.ico）", ok);
+        }
+
         // ---- 热键解析 round-trip ----
         foreach (var s in new[] { "F1", "F3", "F12", "F24", "Ctrl+Alt+A", "Ctrl+Shift+P", "Alt+F4", "Win+D", "Shift+Space", "PrintScreen" })
         {

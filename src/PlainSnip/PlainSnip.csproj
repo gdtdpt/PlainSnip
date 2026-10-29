@@ -11,8 +11,14 @@
     <Version>0.1.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>App.ico</ApplicationIcon>
     <!-- 自用工具：只留中文资源，砍掉多语言附属文件 -->
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- exe 文件图标（ApplicationIcon）与托盘运行时图标（EmbeddedResource）共用同一 ico -->
+    <EmbeddedResource Include="App.ico" />
+  </ItemGroup>
 
 </Project>

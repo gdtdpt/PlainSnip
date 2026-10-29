@@ -19,11 +19,13 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _chkAutostart = new();
     private readonly Button _btnOk = new();
     private readonly Button _btnCancel = new();
+    private readonly Icon _icon = IconFactory.CreateTrayIcon(); // 标题栏/任务栏图标，关闭时释放
 
     public SettingsForm(AppSettings settings)
     {
         AutoScaleMode = AutoScaleMode.None; // 布局缩放由 S() 手动负责
 
+        Icon = _icon;
         Text = "PlainSnip 设置";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -154,5 +156,11 @@ public sealed class SettingsForm : Form
         saved.Save();
         SettingsSaved?.Invoke(saved);
         Close();
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        base.OnFormClosed(e);
+        _icon.Dispose();
     }
 }

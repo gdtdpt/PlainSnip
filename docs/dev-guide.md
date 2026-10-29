@@ -47,9 +47,11 @@ src/PlainSnip/            主工程（net8.0-windows WinForms）
   AppSettings.cs          设置持久化（System.Text.Json → %APPDATA%\PlainSnip\settings.json）
   Autostart.cs            开机自启（HKCU Run）
   SettingsForm.cs         设置窗（含手动 DPI 缩放，见下）
-  IconFactory.cs          运行时 GDI+ 画托盘图标（M0 过渡方案）
+  IconFactory.cs          从嵌入资源加载 App.ico（托盘/窗体图标）
   SelfTest.cs             --selftest
 tools/build.ps1           构建脚本
+tools/make_icon.ps1       重新生成 App.ico（虚线选框+剪刀，16/24/32/48/256 多尺寸；DIB 条目 16-48 + PNG 条目 256）
+src/PlainSnip/App.ico     应用图标（csproj ApplicationIcon + EmbeddedResource 共用；生成产物，勿手改）
 dist/                     产物（gitignore）
 ```
 
