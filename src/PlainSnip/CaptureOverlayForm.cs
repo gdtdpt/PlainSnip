@@ -378,8 +378,9 @@ public sealed class CaptureOverlayForm : Form
         }
 
         // Idle：50ms 节流悬停检测 + 放大镜跟随
+        // 无符号差值：初值 int.MinValue 时有符号差会溢出为负、检测永不触发（真踩过），且可免疫 TickCount 回绕
         int now = Environment.TickCount;
-        if (_session.State == CaptureSession.SelState.Idle && now - _lastHoverTick >= 50)
+        if (_session.State == CaptureSession.SelState.Idle && (uint)(now - _lastHoverTick) >= 50)
         {
             _lastHoverTick = now;
             _session.UpdateHover(v);
@@ -387,7 +388,7 @@ public sealed class CaptureOverlayForm : Form
         Invalidate();
     }
 
-    private int _lastHoverTick = int.MinValue;
+    private int _lastHoverTick;
 
     /// <summary>把本屏 DPI 换算的拖动阈值交给会话（会话 Begin 后调用一次）。</summary>
     internal void SyncDpiToSession() => _session.SetDragThreshold(S(4));
