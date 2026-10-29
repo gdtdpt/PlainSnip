@@ -9,28 +9,32 @@ namespace PlainSnip;
 /// </summary>
 public sealed class CaptureSession : IDisposable
 {
-    public enum SelState { Idle, Dragging, Resizing, Moving, Selected }
+    public enum SelState { Idle, PendingConfirm, Dragging, Resizing, Moving, Selected }
 
     private List<ScreenCapture.ScreenShot> _shots = new();
     private readonly List<CaptureOverlayForm> _overlays = new();
     private CaptureOverlayForm? _interactive;   // 当前接收鼠标输入的遮罩窗
     private static CaptureSession? _current;
+    private Point _confirmAnchor;               // PendingConfirm 按下锚点
+    private int _dragThreshold = 4;             // 拖动判定阈值（物理像素，遮罩窗按 DPI 设定）
 
     public SelState State { get; private set; } = SelState.Idle;
     public Rectangle Selection { get; private set; }    // 虚拟桌面物理坐标
+    public Rectangle HoverRect { get; private set; }    // 悬停预选候选窗口（虚拟物理坐标，Idle/PendingConfirm 态）
     public int ResizeHandle { get; private set; } = -1; // 0-7，见 CaptureOverlayForm.HandleHitTest
     public Point DragAnchor { get; private set; }       // 拖动起点（虚拟坐标）
     public Rectangle DragOrigSel { get; private set; }  // 拖动开始时的选区
     public bool DebugMode { get; init; }                // --shot 冒烟：自动框选 + 定时退出
+    public bool DebugHover { get; init; }               // --hover 冒烟：按光标位置预选 + 定时退出
 
     public IReadOnlyList<ScreenCapture.ScreenShot> Shots => _shots;
     public CaptureOverlayForm? Interactive => _interactive;
 
     /// <summary>启动会话。已有会话时返回 null（F1 重复按忽略）。</summary>
-    public static CaptureSession? Start(bool debug = false)
+    public static CaptureSession? Start(bool debug = false, bool debugHover = false)
     {
         if (_current != null) return null;
-        _current = new CaptureSession { DebugMode = debug };
+        _current = new CaptureSession { DebugMode = debug, DebugHover = debugHover };
         _current.Begin();
         return _current;
     }
@@ -52,18 +56,31 @@ public sealed class CaptureSession : IDisposable
         }
         foreach (var overlay in _overlays) overlay.Show();
         _interactive?.Activate();
+        _interactive?.SyncDpiToSession();
 
-        if (DebugMode)
+        if (DebugMode || DebugHover)
         {
-            // 冒烟：自动框选交互屏中部 40% 区域，6 秒后自动退出（防挂死）
-            var b = _interactive!._screen.Bounds;
-            Selection = new Rectangle(b.X + b.Width * 3 / 10, b.Y + b.Height * 3 / 10,
-                b.Width * 2 / 5, b.Height * 2 / 5);
-            State = SelState.Selected;
-            RefreshAll();
+            if (DebugHover)
+            {
+                // 冒烟：按当前光标位置做一次悬停预选，6 秒后自动退出
+                UpdateHover(Cursor.Position);
+            }
+            else
+            {
+                // 冒烟：自动框选交互屏中部 40% 区域
+                var b = _interactive!._screen.Bounds;
+                Selection = new Rectangle(b.X + b.Width * 3 / 10, b.Y + b.Height * 3 / 10,
+                    b.Width * 2 / 5, b.Height * 2 / 5);
+                State = SelState.Selected;
+                RefreshAll();
+            }
             var t = new System.Windows.Forms.Timer { Interval = 6000 };
             t.Tick += (_, _) => { t.Stop(); Cancel(); };
             t.Start();
+        }
+        else
+        {
+            UpdateHover(Cursor.Position);   // F1 进入即按光标位置预选一次（§5.6）
         }
     }
 
@@ -77,11 +94,70 @@ public sealed class CaptureSession : IDisposable
 
     // ---- 选区操作（由遮罩窗输入事件驱动）----
 
+    /// <summary>悬停检测（遮罩窗 50ms 节流后调用）。仅 Idle 态生效。</summary>
+    public void UpdateHover(Point virtualPt)
+    {
+        if (State != SelState.Idle) return;
+        var c = WindowDetector.DetectAt(virtualPt);
+        var rect = c.Hwnd != IntPtr.Zero ? c.Bounds : Rectangle.Empty;
+        if (rect != HoverRect)
+        {
+            HoverRect = rect;
+            RefreshAll();
+        }
+    }
+
+    /// <summary>MouseDown 命中预选：进入待确认（位移超阈值转拖拽，未超则 MouseUp 确认）。</summary>
+    public void BeginPendingConfirm(Point virtualPt)
+    {
+        State = SelState.PendingConfirm;
+        _confirmAnchor = virtualPt;
+    }
+
+    /// <summary>PendingConfirm 中位移超阈值 → 转手动拖拽。返回是否转换。</summary>
+    public bool UpdatePendingConfirm(Point virtualPt)
+    {
+        if (State != SelState.PendingConfirm) return false;
+        int dx = Math.Abs(virtualPt.X - _confirmAnchor.X);
+        int dy = Math.Abs(virtualPt.Y - _confirmAnchor.Y);
+        if (Math.Max(dx, dy) <= _dragThreshold) return false;
+        BeginDrag(_confirmAnchor);
+        UpdateDrag(virtualPt);
+        return true;
+    }
+
+    /// <summary>PendingConfirm 的 MouseUp：确认预选窗口为选区。</summary>
+    public void ConfirmHover()
+    {
+        if (State != SelState.PendingConfirm || HoverRect.IsEmpty)
+        {
+            EndInteraction();
+            return;
+        }
+        Selection = HoverRect;
+        ClearHover();
+        State = SelState.Selected;
+        RefreshAll();
+    }
+
+    private void ClearHover()
+    {
+        if (!HoverRect.IsEmpty)
+        {
+            HoverRect = Rectangle.Empty;
+            RefreshAll();
+        }
+    }
+
+    /// <summary>遮罩窗按本屏 DPI 设定拖动判定阈值（物理像素）。</summary>
+    public void SetDragThreshold(int px) => _dragThreshold = Math.Max(1, px);
+
     public void BeginDrag(Point virtualPt)
     {
         State = SelState.Dragging;
         DragAnchor = virtualPt;
         Selection = Rectangle.Empty;
+        ClearHover();
         RefreshAll();
     }
 
@@ -90,6 +166,7 @@ public sealed class CaptureSession : IDisposable
         State = SelState.Moving;
         DragAnchor = virtualPt;
         DragOrigSel = Selection;
+        ClearHover();
     }
 
     public void BeginResize(int handle, Point virtualPt)
@@ -98,6 +175,7 @@ public sealed class CaptureSession : IDisposable
         ResizeHandle = handle;
         DragAnchor = virtualPt;
         DragOrigSel = Selection;
+        ClearHover();
     }
 
     public void UpdateDrag(Point virtualPt)
@@ -202,6 +280,16 @@ public sealed class CaptureSession : IDisposable
     {
         if (Selection.IsEmpty) return Rectangle.Empty;
         var inter = Rectangle.Intersect(Selection, screen.Bounds);
+        if (inter.IsEmpty) return Rectangle.Empty;
+        inter.Offset(-screen.Bounds.X, -screen.Bounds.Y);
+        return inter;
+    }
+
+    /// <summary>悬停候选与本屏的交集（本地物理坐标）；无候选返回 Empty。</summary>
+    public Rectangle HoverLocal(Screen screen)
+    {
+        if (HoverRect.IsEmpty) return Rectangle.Empty;
+        var inter = Rectangle.Intersect(HoverRect, screen.Bounds);
         if (inter.IsEmpty) return Rectangle.Empty;
         inter.Offset(-screen.Bounds.X, -screen.Bounds.Y);
         return inter;

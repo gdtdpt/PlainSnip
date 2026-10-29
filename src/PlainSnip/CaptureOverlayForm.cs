@@ -73,7 +73,30 @@ public sealed class CaptureOverlayForm : Form
 
         if (selLocal.IsEmpty)
         {
-            g.FillRectangle(dark, ClientRectangle);
+            // Idle/PendingConfirm：悬停候选高亮（区域提亮 + 描边），其余变暗
+            var hoverLocal = _session.HoverLocal(_screen);
+            bool showHover = !hoverLocal.IsEmpty
+                && _session.State is CaptureSession.SelState.Idle or CaptureSession.SelState.PendingConfirm;
+            if (showHover)
+            {
+                var h = hoverLocal;
+                g.FillRectangle(dark, new Rectangle(0, 0, ClientSize.Width, Math.Max(0, h.Top)));
+                g.FillRectangle(dark, new Rectangle(0, h.Bottom, ClientSize.Width, Math.Max(0, ClientSize.Height - h.Bottom)));
+                g.FillRectangle(dark, new Rectangle(0, h.Top, Math.Max(0, h.Left), h.Height));
+                g.FillRectangle(dark, new Rectangle(h.Right, h.Top, Math.Max(0, ClientSize.Width - h.Right), h.Height));
+
+                using var glow = new SolidBrush(Color.FromArgb(28, 255, 255, 255));
+                g.FillRectangle(glow, h);
+                using var accent = new Pen(Color.FromArgb(255, 84, 158, 255), 2f);
+                g.DrawRectangle(accent, h.X, h.Y, h.Width - 1, h.Height - 1);
+
+                if (_interactive)
+                    DrawSizeLabel(g, h, $"{_session.HoverRect.Width} × {_session.HoverRect.Height}");
+            }
+            else
+            {
+                g.FillRectangle(dark, ClientRectangle);
+            }
         }
         else
         {
@@ -91,7 +114,7 @@ public sealed class CaptureOverlayForm : Form
             if (_interactive)
             {
                 if (_session.State == CaptureSession.SelState.Selected) DrawHandles(g, r);
-                DrawSizeLabel(g, r);
+                DrawSizeLabel(g, r, $"{_session.Selection.Width} × {_session.Selection.Height}");
                 if (_session.State == CaptureSession.SelState.Selected) DrawToolbar(g);
             }
         }
@@ -99,9 +122,8 @@ public sealed class CaptureOverlayForm : Form
         if (_interactive) DrawMagnifier(g);
     }
 
-    private void DrawSizeLabel(Graphics g, Rectangle selLocal)
+    private void DrawSizeLabel(Graphics g, Rectangle selLocal, string text)
     {
-        string text = $"{_session.Selection.Width} × {_session.Selection.Height}";
         var size = TextRenderer.MeasureText(text, _uiFont);
         int padX = S(8);
         var box = new Size(size.Width + padX * 2, size.Height + S(4));
@@ -296,6 +318,14 @@ public sealed class CaptureOverlayForm : Form
         {
             _session.BeginMove(v);
         }
+        else if (_session.State == CaptureSession.SelState.Idle)
+        {
+            // 命中预选 → 待确认（单击确认 / 拖动转手拉）；未命中 → 直接框选
+            if (!_session.HoverRect.IsEmpty && _session.HoverRect.Contains(v))
+                _session.BeginPendingConfirm(v);
+            else
+                _session.BeginDrag(v);
+        }
         else
         {
             _session.BeginDrag(v);   // 选区外点击 = 重新框选
@@ -335,11 +365,32 @@ public sealed class CaptureOverlayForm : Form
             Invalidate();
         }
 
+        if (_session.State == CaptureSession.SelState.PendingConfirm)
+        {
+            _session.UpdatePendingConfirm(v);   // 超阈值自动转 Dragging
+            return;
+        }
+
         if (_session.State is CaptureSession.SelState.Dragging or CaptureSession.SelState.Moving or CaptureSession.SelState.Resizing)
+        {
             _session.UpdateDrag(v);
-        else
-            Invalidate();   // 放大镜跟随
+            return;
+        }
+
+        // Idle：50ms 节流悬停检测 + 放大镜跟随
+        int now = Environment.TickCount;
+        if (_session.State == CaptureSession.SelState.Idle && now - _lastHoverTick >= 50)
+        {
+            _lastHoverTick = now;
+            _session.UpdateHover(v);
+        }
+        Invalidate();
     }
+
+    private int _lastHoverTick = int.MinValue;
+
+    /// <summary>把本屏 DPI 换算的拖动阈值交给会话（会话 Begin 后调用一次）。</summary>
+    internal void SyncDpiToSession() => _session.SetDragThreshold(S(4));
 
     private string? HoverButton(Point local)
     {
@@ -352,7 +403,12 @@ public sealed class CaptureOverlayForm : Form
     {
         base.OnMouseUp(e);
         if (e.Button == MouseButtons.Left)
-            _session.EndInteraction();
+        {
+            if (_session.State == CaptureSession.SelState.PendingConfirm)
+                _session.ConfirmHover();
+            else
+                _session.EndInteraction();
+        }
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)

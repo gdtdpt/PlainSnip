@@ -27,6 +27,13 @@ internal static class Program
                     Application.Run(shotSession.InteractiveForm);
                 return 0;
 
+            case "hover":
+                // UI 冒烟入口：按光标位置悬停预选 + 6 秒自动退出，验证 M1b 高亮渲染
+                var hoverSession = CaptureSession.Start(debugHover: true);
+                if (hoverSession?.InteractiveForm != null)
+                    Application.Run(hoverSession.InteractiveForm);
+                return 0;
+
             default:
                 break;
         }

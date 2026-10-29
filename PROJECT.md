@@ -43,7 +43,7 @@
 2. **窗口自动检测**：层级 1 = `WindowFromPoint` + `GetAncestor(GA_ROOT)` 顶层窗口；层级 2 = `ChildWindowFromPointEx`/`RealChildWindowFromPoint` 递归下钻传统控件（不做 UIA）
 3. 检测到窗口后高亮描边 + 自动预选该窗口区域，按住拖动进入自由框选（Snipaste 交互范式）
 4. 多屏支持：跨屏框选、放大镜（像素级 + 取色）、实时尺寸显示
-5. 自身遮罩层/工具条设 `WS_EX_TRANSPARENT`，避免检测到自己
+5. 自身遮罩窗不被检测命中：按进程 PID 过滤（§5.6；原 `WS_EX_TRANSPARENT` 方案作废——会使鼠标输入穿透）
 6. 完成后去向：复制 / 保存 / 直接贴图
 
 **B. 标注（精简版，烙定式）**
@@ -111,6 +111,17 @@
 - 自绘 UI 的布局尺寸一律过 S() 手动 DPI 缩放（M0 踩坑，见 dev-guide）
 - **对 M4 的前瞻复用**：① 捕获能力收敛在 ScreenCapture 静态服务（M4 分帧复用）② 遮罩框选做成「返回选区的可复用组件」（M4 滚动截图的先选区入口复用）③ M1b 窗口检测为 M4 提供目标 HWND
 
+### 5.6 窗口自动检测（M1b，2026-10-29 设计定稿）
+
+- **候选查找不走 `WindowFromPoint`**：遮罩窗是全屏置顶窗，`WindowFromPoint` 必然命中自己。改为 EnumWindows 按朱序自顶向下枚举顶层窗口，取第一个「可见 + 未 cloaked + 非自身 PID + DWM 扩展边界包含光标」的窗口
+- **两级**：顶层窗口（DWM `DWMWA_EXTENDED_FRAME_BOUNDS` 去阴影边距，失败回退 `GetWindowRect`）→ `RealChildWindowFromPoint` 递归下钻到最深可见子窗口（浏览器/Electron/UWP 到 HWND 为止，§5.2）
+- **下钻启发式**：候选比 32×24 物理像素小、或面积不足根窗口 0.5% 时回退上一级
+- **自身排除**：`GetWindowThreadProcessId` == 自身 PID 直接跳过（原 §4 v1-5 的 `WS_EX_TRANSPARENT` 作废：会使鼠标消息穿透、输入失效）
+- **预选交互**：Idle 态悬停高亮候选（区域提亮 + 2px 描边）；MouseDown 命中预选进 `PendingConfirm`，位移超 S(4) 转手动拖拽（预选作废），MouseUp 未超阈值确认窗口矩形为选区；Selected 态预选关闭，回到 M1a 交互
+- **节流**：50ms 间隔采样，命中候选窗口时缓存、光标出窗失效
+- **F1 进入即检测**：遮罩显示后按当前光标位置先检测一次，无需先动鼠标
+- **跨屏**：候选矩形以虚拟桌面物理坐标记录（同选区），各遮罩窗绘制与自己屏幕的交集
+
 ## 6. 里程碑
 
 | 里程碑 | 内容 | 验收 |
@@ -158,6 +169,9 @@
 | 2026-10-29 | M1a：遮罩窗 per-monitor 多窗，放弃单大窗 | 各窗固定本屏 DPI，避免 WM_DPICHANGED 拉伸与坐标换算泥潭（§5.5） |
 | 2026-10-29 | M1a：选区 8 手柄微调进 M1a | 「选区已定」状态的一部分，后补要重构状态机 |
 | 2026-10-29 | M1a：放大镜用 GDI+ 拉伸快照，不用 Magnification API | COM 依赖与窗口层级管理成本不值 |
+| 2026-10-29 | M1b：候选查找用 EnumWindows 朱序枚举，不用 WindowFromPoint | 遮罩窗全屏置顶，WindowFromPoint 必命中自己；EnumWindows 可跳过自身 PID |
+| 2026-10-29 | M1b：自身排除用 PID 过滤，§4 v1-5 的 WS_EX_TRANSPARENT 作废 | WS_EX_TRANSPARENT 会让鼠标消息穿透遮罩，输入失效 |
+| 2026-10-29 | M1b：下钻到子窗口级 + 过小块回退；预选 PendingConfirm（拖动阈值 S(4)）；F1 进入即检测 | 对齐 Snipaste 交互范式，单击/拖动一个按下动作分型 |
 
 ## 10. 待定事项
 

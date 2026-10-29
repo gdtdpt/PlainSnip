@@ -96,6 +96,21 @@ public static class SelfTest
             Check("跨屏选区合成（左右两屏拼图）", ok);
         }
 
+        // ---- 窗口检测下钻启发式（M1b 纯函数） ----
+        {
+            var root = new WindowDetector.Candidate(new Rectangle(0, 0, 800, 600), IntPtr.Zero);
+            var tiny = new WindowDetector.Candidate(new Rectangle(10, 10, 16, 12), IntPtr.Zero);
+            var okChild = new WindowDetector.Candidate(new Rectangle(10, 10, 200, 100), IntPtr.Zero);
+            Check("下钻启发式：过小块回退根窗口",
+                WindowDetector.PickCandidate(new[] { root, tiny }).Bounds == root.Bounds);
+            Check("下钻启发式：正常子块保留",
+                WindowDetector.PickCandidate(new[] { root, okChild }).Bounds == okChild.Bounds);
+            Check("下钻启发式：面积比例回退",
+                WindowDetector.TooSmall(new Rectangle(0, 0, 40, 40), new Rectangle(0, 0, 800, 600)));
+            Check("下钻启发式：边界值 32x24 不算过小",
+                !WindowDetector.TooSmall(new Rectangle(0, 0, 32, 24), new Rectangle(0, 0, 800, 600)));
+        }
+
         // ---- 开机自启注册表可读（只读，不写） ----
         try
         {

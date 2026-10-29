@@ -48,6 +48,7 @@ src/PlainSnip/            主工程（net8.0-windows WinForms）
   Autostart.cs            开机自启（HKCU Run）
   SettingsForm.cs         设置窗（含手动 DPI 缩放，见下）
   IconFactory.cs          从嵌入资源加载 App.ico（托盘/窗体图标）
+  WindowDetector.cs       窗口自动检测（EnumWindows Z 序 + PID 过滤 + DWM 边界 + 子窗口下钻启发式）
   SelfTest.cs             --selftest
 tools/build.ps1           构建脚本
 tools/make_icon.ps1       重新生成 App.ico（虚线选框+剪刀，16/24/32/48/256 多尺寸；DIB 条目 16-48 + PNG 条目 256）
