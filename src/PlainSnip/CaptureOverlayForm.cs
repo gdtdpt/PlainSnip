@@ -289,11 +289,18 @@ public sealed class CaptureOverlayForm : Form
         {
             case ToolBtn.Select:
             {
+                // 经典指针轮廓：顶点→左缘→缺口→尾翼→右肩→斜边回顶点（宽9×高14）
+                int lx = cx - U(4);
                 using var fill = new SolidBrush(ic);
                 g.FillPolygon(fill, new[]
                 {
-                    new Point(cx + U(-4), cy + U(-7)), new Point(cx + U(-4), cy + U(7)), new Point(cx + U(-1), cy + U(3)),
-                    new Point(cx + U(2), cy + U(7)), new Point(cx + U(4), cy + U(5)), new Point(cx + U(1), cy + U(2)),
+                    new Point(lx, cy + U(-7)),
+                    new Point(lx, cy + U(6)),
+                    new Point(lx + U(3), cy + U(3)),
+                    new Point(lx + U(5), cy + U(7)),
+                    new Point(lx + U(7), cy + U(6)),
+                    new Point(lx + U(5), cy + U(2)),
+                    new Point(lx + U(9), cy + U(2)),
                 });
                 break;
             }
