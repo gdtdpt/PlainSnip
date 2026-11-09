@@ -192,8 +192,15 @@ public static class AnnotationRenderer
                     using var brush = new SolidBrush(rec.Color);
                     g.FillEllipse(brush, r);
                     using var font = new Font("Microsoft YaHei UI", d * 0.55f, GraphicsUnit.Pixel);
-                    var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                    g.DrawString(rec.Serial.ToString(), font, Brushes.White, r, fmt);
+                    // 按字形实际边界居中（LineAlignment.Center 按行框居中，数字整体偏上）
+                    string text = rec.Serial.ToString();
+                    using var fmt = new StringFormat(StringFormat.GenericTypographic);
+                    fmt.SetMeasurableCharacterRanges(new[] { new CharacterRange(0, text.Length) });
+                    var layout = new RectangleF(0, 0, d * 4 + 100, d * 4 + 100);
+                    var gb = g.MeasureCharacterRanges(text, font, layout, fmt)[0].GetBounds(g);
+                    g.DrawString(text, font, Brushes.White,
+                        r.X + r.Width / 2f - gb.Left - gb.Width / 2f,
+                        r.Y + r.Height / 2f - gb.Top - gb.Height / 2f, fmt);
                     break;
                 }
             }

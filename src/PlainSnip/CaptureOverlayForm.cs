@@ -356,10 +356,10 @@ public sealed class CaptureOverlayForm : Form
             case ToolBtn.Serial:
             {
                 int d = U(16);
+                var box = new Rectangle(cx - d / 2, cy - d / 2, d, d);
                 using var fill = new SolidBrush(Color.FromArgb(0, 120, 215));
-                g.FillEllipse(fill, cx - d / 2, cy - d / 2, d, d);
-                TextRenderer.DrawText(g, "1", _uiFont, r, Color.White,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                g.FillEllipse(fill, box);
+                DrawGlyphCentered(g, "1", _uiFont, box, Color.White);
                 break;
             }
             case ToolBtn.Undo:      // ↶ 弧形箭头（右端→顶部→左端，头部在左下）
@@ -445,6 +445,23 @@ public sealed class CaptureOverlayForm : Form
         {
             g.SmoothingMode = smoothing;
         }
+    }
+
+    /// <summary>
+    /// 按字形实际边界在 box 内居中绘制文本。
+    /// TextRenderer.VerticalCenter 与 StringFormat.LineAlignment.Center 都按行框（含内部行距）居中，
+    /// 数字字形会整体偏上；此方法用 MeasureCharacterRanges 量出字形真实包围盒再定位。
+    /// </summary>
+    private static void DrawGlyphCentered(Graphics g, string s, Font font, Rectangle box, Color color)
+    {
+        using var sf = new StringFormat(StringFormat.GenericTypographic);
+        sf.SetMeasurableCharacterRanges(new[] { new CharacterRange(0, s.Length) });
+        var layout = new RectangleF(0, 0, box.Width * 4 + 100, box.Height * 4 + 100);
+        var gb = g.MeasureCharacterRanges(s, font, layout, sf)[0].GetBounds(g);
+        using var brush = new SolidBrush(color);
+        g.DrawString(s, font, brush,
+            box.X + box.Width / 2f - gb.Left - gb.Width / 2f,
+            box.Y + box.Height / 2f - gb.Top - gb.Height / 2f, sf);
     }
 
     private ToolBtn? HitToolbar(Point local)
