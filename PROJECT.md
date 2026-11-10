@@ -210,6 +210,7 @@
 | 2026-10-29 | ContextMenuStrip 一律复用实例、随窗体释放，禁止 Closed 即 Dispose | ModalMenuFilter 会二次关闭已释放菜单 → ObjectDisposedException 崩溃（真机复现） |
 | 2026-11-10 | 工具条图标改内嵌 **Bootstrap Icons v1（MIT）** 矢量路径 + 自研 SVG path→GDI+ 渲染器（`IconGlyphRenderer`，支持 M/L/H/V/C/S/Q/T/A/Z，弧转三次贝塞尔）；箭头/T/序号①/颜色/线宽保持自绘（笔画对齐矢量线宽） | 手绘多边形精致度达不到专业水准；Snipaste 资源有版权不可提取，MIT 图标集可合法内嵌（免运行时依赖） |
 | 2026-11-10 | 第一个按钮用 arrows-move（四向箭头）而非 Snipaste 的框选组合图标 | Snipaste 首钮是「图形框选」，我们是「移动选区」，功能不同不能照抄外形 |
+| 2026-11-10 | 图标库统一切换为 **Lucide Icons（ISC）**：13 个按钮全部为 24×24、stroke-width 2、圆角端点的描边路径，按同一线宽 `DrawPath` 描边渲染（马赛克=grid-2x2 田字格、箭头=arrow-up-right、文字=type）；仅颜色/线宽/序号①保留自绘（需展示当前取值/数字，线宽与图标对齐） | Lucide 整套均为描边图标，描边渲染从结构上保证所有按钮笔画粗细一致；Bootstrap 版混用 fill 图标导致风格不统一（用户反馈） |
 
 ## 10. 待定事项
 

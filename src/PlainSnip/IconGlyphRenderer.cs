@@ -1,5 +1,6 @@
-// Bootstrap Icons v1 (MIT, https://icons.getbootstrap.com/) 路径渲染。
-// 内嵌 d 数据（viewBox 0 0 16 16），运行时解析为 GDI+ GraphicsPath 填充，任何 DPI 矢量缩放。
+// SVG path 渲染：把 Lucide Icons（ISC License，24x24 视框、stroke-width 2、圆角端点）
+// 的内嵌 d 数据解析为 GDI+ GraphicsPath，调用方按统一线宽描边（DrawPath），
+// 从而保证所有按钮笔画粗细一致、任意 DPI 下矢量清晰。
 // 解析支持：M/L/H/V/C/S/Q/T/A/Z（含小写相对形式）；弧线按 SVG 规范转为三次贝塞尔。
 using System.Drawing.Drawing2D;
 
@@ -7,12 +8,24 @@ namespace PlainSnip;
 
 public static class IconGlyphRenderer
 {
-    /// <summary>把 d 数据渲染为 GraphicsPath（已按 scale 缩放，原点 (0,0)，占 16*scale 见方）。</summary>
-    public static GraphicsPath Build(string d, float scale)
+    /// <summary>把图标的全部子路径合并为一条 GraphicsPath（已按 scale 缩放，原点 (0,0)，占 24*scale 见方）。</summary>
+    public static GraphicsPath Build(string[] parts, float scale)
     {
-        // Bootstrap Icons 按 fill-rule="evenodd" 设计（copy/undo 等含镂空轮廓），
-        // GDI+ 对应 FillMode.Alternate（奇偶填充）
-        var path = new GraphicsPath { FillMode = FillMode.Alternate };
+        var path = new GraphicsPath { FillMode = FillMode.Winding };
+        foreach (var d in parts)
+            AppendD(d, path);
+
+        if (scale != 1f)
+        {
+            using var m = new Matrix(scale, 0, 0, scale, 0, 0);
+            path.Transform(m);
+        }
+        return path;
+    }
+
+    /// <summary>解析单条 d 数据并追加到 path。</summary>
+    private static void AppendD(string d, GraphicsPath path)
+    {
         var toks = Tokenize(d);
         int i = 0;
         var cur = new PointF(0, 0);
@@ -169,13 +182,6 @@ public static class IconGlyphRenderer
                     break;
             }
         }
-
-        if (scale != 1f)
-        {
-            using var m = new System.Drawing.Drawing2D.Matrix(scale, 0, 0, scale, 0, 0);
-            path.Transform(m);
-        }
-        return path;
     }
 
     private static readonly char[] NumberStart = "+-.0123456789".ToCharArray();

@@ -278,8 +278,9 @@ public sealed class CaptureOverlayForm : Form
     }
 
     /// <summary>
-    /// 工具条图标。矢量图形（MIT Bootstrap Icons，16 网格）按 DPI 缩放填充；
-    /// 箭头/T/序号/颜色/线宽为自绘，笔画粗细与矢量图标网格线宽（≈1.2 单位）对齐。
+    /// 工具条图标。除「颜色 / 线宽 / 序号」三个需要展示当前取值或数字的按钮外，
+    /// 全部使用 Lucide Icons（ISC，24 网格、stroke-width 2、圆角端点）路径，
+    /// 按 <see cref="IconStrokeWidth"/> 统一描边，保证 13 个按钮笔画粗细完全一致。
     /// </summary>
     private void DrawToolIcon(Graphics g, ToolBtn id, Rectangle r, bool disabled)
     {
@@ -290,16 +291,19 @@ public sealed class CaptureOverlayForm : Form
 
         string? glyph = id switch
         {
-            ToolBtn.Select => "Select",   // arrows-move：四向箭头，表意「移动/调整选区」
+            ToolBtn.Select => "Move",     // move：四向箭头，表意「移动/调整选区」
             ToolBtn.Rect => "Rect",       // square
             ToolBtn.Ellipse => "Ellipse", // circle
-            ToolBtn.Pen => "Pen",         // pencil-fill
-            ToolBtn.Undo => "Undo",       // arrow-counterclockwise
-            ToolBtn.Redo => "Redo",       // arrow-clockwise
-            ToolBtn.Pin => "Pin",         // pin（线稿大头钉）
-            ToolBtn.Save => "Save",       // floppy（线稿软盘）
-            ToolBtn.Copy => "Copy",       // copy（线稿双页，evenodd 镂空）
-            ToolBtn.Cancel => "Cancel",   // x-lg
+            ToolBtn.Arrow => "Arrow",     // arrow-up-right
+            ToolBtn.Pen => "Pen",         // pencil
+            ToolBtn.Text => "Text",       // type
+            ToolBtn.Mosaic => "Mosaic",   // grid-2x2：方框内分四格 = 打码
+            ToolBtn.Undo => "Undo",       // undo-2
+            ToolBtn.Redo => "Redo",       // redo-2
+            ToolBtn.Pin => "Pin",         // pin
+            ToolBtn.Save => "Save",       // save（软盘）
+            ToolBtn.Copy => "Copy",       // copy（双页）
+            ToolBtn.Cancel => "Cancel",   // x
             _ => null,
         };
         if (glyph != null)
@@ -314,62 +318,34 @@ public sealed class CaptureOverlayForm : Form
         {
             switch (id)
             {
-                case ToolBtn.Arrow:     // 粗斜线 + 实心头部
+                case ToolBtn.Serial:    // 描边圆 + 数字，与线稿图标同粗细
                 {
-                    using var thick = new Pen(ic, MathF.Max(1.4f, 1.4f * dpi));
-                    g.DrawLine(thick, cx + U(-7), cy + U(7), cx + U(3), cy + U(-3));
-                    using var head = new SolidBrush(ic);
-                    g.FillPolygon(head, new[]
-                    {
-                        new Point(cx + U(8), cy + U(-8)),
-                        new Point(cx + U(-1), cy + U(-6)),
-                        new Point(cx + U(6), cy + U(1)),
-                    });
-                    break;
-                }
-                case ToolBtn.Text:      // 粗体 T：横梁 + 竖杆
-                {
-                    float s = S(18) / 16f;
-                    var bar = new RectangleF(cx - 5 * s, cy - 6.5f * s, 10 * s, 2.2f * s);
-                    var stem = new RectangleF(cx - 1.1f * s, cy - 6.5f * s, 2.2f * s, 13 * s);
-                    using var b = new SolidBrush(ic);
-                    g.FillRectangle(b, bar);
-                    g.FillRectangle(b, stem);
-                    break;
-                }
-                case ToolBtn.Mosaic:    // 紧贴的 2×2 棋盘（对角两格实心），即打码/透明网格符号
-                {
-                    float s = S(18) / 16f;
-                    float cell = 7 * s;
-                    float x0 = cx - cell, y0 = cy - cell;
-                    using var b = new SolidBrush(ic);
-                    g.FillRectangle(b, x0, y0, cell, cell);              // 左上
-                    g.FillRectangle(b, x0 + cell, y0 + cell, cell, cell); // 右下
-                    break;
-                }
-                case ToolBtn.Serial:
-                {
-                    int d = U(16);
+                    int d = U(17);
                     var box = new Rectangle(cx - d / 2, cy - d / 2, d, d);
-                    using var blue = new SolidBrush(Color.FromArgb(0, 120, 215));
-                    g.FillEllipse(blue, box);
-                    DrawGlyphCentered(g, "1", _uiFont, box, Color.White);
+                    using var pen = new Pen(ic, IconStrokeWidth) { EndCap = LineCap.Round };
+                    g.DrawEllipse(pen, box);
+                    using var font = new Font("Microsoft YaHei UI", d * 0.58f, GraphicsUnit.Pixel);
+                    DrawGlyphCentered(g, "1", font, box, ic);
                     break;
                 }
-                case ToolBtn.Color:
+                case ToolBtn.Color:     // 当前颜色色块 + 同粗细描边
                 {
                     int s2 = U(13);
-                    using var cf = new SolidBrush(_session.StrokeColor);
                     var rect = new Rectangle(cx - s2 / 2, cy - s2 / 2, s2, s2);
+                    using var cf = new SolidBrush(_session.StrokeColor);
                     g.FillRectangle(cf, rect);
-                    using var pen = new Pen(Color.FromArgb(40, 40, 40), dpi);
+                    using var pen = new Pen(ic, IconStrokeWidth);
                     g.DrawRectangle(pen, rect);
                     break;
                 }
-                case ToolBtn.Width:
+                case ToolBtn.Width:     // 当前线宽横线（圆头，与图标端点观感一致）
                 {
-                    int w2 = U(16);
-                    using var thick = new Pen(ic, Math.Clamp(_session.StrokeWidth, 2, 12));
+                    int w2 = U(14);
+                    using var thick = new Pen(ic, Math.Clamp(_session.StrokeWidth, 2, 12))
+                    {
+                        StartCap = LineCap.Round,
+                        EndCap = LineCap.Round,
+                    };
                     g.DrawLine(thick, cx - w2 / 2, cy, cx + w2 / 2, cy);
                     break;
                 }
@@ -381,18 +357,27 @@ public sealed class CaptureOverlayForm : Form
         }
     }
 
-    /// <summary>把内嵌 SVG 路径按 18 逻辑 px 尺寸居中填入按钮矩形。</summary>
+    /// <summary>Lucide 图标统一线宽：视框 24、stroke-width 2，按当前按钮尺寸换算。</summary>
+    private float IconStrokeWidth => MathF.Max(1f, 2f * (S(19) / 24f));
+
+    /// <summary>把内嵌 SVG 路径按 19 逻辑 px 尺寸居中描边到按钮矩形。</summary>
     private void DrawSvgGlyph(Graphics g, string key, Rectangle r, Color color)
     {
-        string? d = IconGlyphs.Get(key);
-        if (d == null) return;
-        float scale = S(18) / 16f;
-        using var path = IconGlyphRenderer.Build(d, scale);
-        float ox = r.X + (r.Width - 16 * scale) / 2f;
-        float oy = r.Y + (r.Height - 16 * scale) / 2f;
-        path.Transform(new Matrix(1, 0, 0, 1, ox, oy));
-        using var b = new SolidBrush(color);
-        g.FillPath(b, path);
+        string[]? parts = IconGlyphs.Get(key);
+        if (parts == null) return;
+        float size = S(19);
+        float scale = size / 24f;
+        using var path = IconGlyphRenderer.Build(parts, scale);
+        float ox = r.X + (r.Width - size) / 2f;
+        float oy = r.Y + (r.Height - size) / 2f;
+        using (var m = new Matrix(1, 0, 0, 1, ox, oy)) path.Transform(m);
+        using var pen = new Pen(color, IconStrokeWidth)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round,
+        };
+        g.DrawPath(pen, path);
     }
 
     /// <summary>

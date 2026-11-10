@@ -45,7 +45,7 @@
 
 ## 开源引用
 
-- [Bootstrap Icons v1](https://icons.getbootstrap.com/)（MIT License）——工具条矢量图标路径数据，内嵌于 `src/PlainSnip/IconGlyphs.cs`
+- [Lucide Icons](https://lucide.dev/)（ISC License）——工具条矢量图标路径数据，内嵌于 `src/PlainSnip/IconGlyphs.cs`（由 `tools/gen_glyphs.py` 生成）
 
 ## 开发者
 
