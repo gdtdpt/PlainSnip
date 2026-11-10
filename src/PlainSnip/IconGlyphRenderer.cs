@@ -13,7 +13,12 @@ public static class IconGlyphRenderer
     {
         var path = new GraphicsPath { FillMode = FillMode.Winding };
         foreach (var d in parts)
+        {
+            // 每个 d 是独立子图：不开新 figure 的话，GDI+ 会把上一条路径的终点
+            // 与本条起点连成线（× 被连成 ◁、图钉多出贯穿斜线的根因）
+            path.StartFigure();
             AppendD(d, path);
+        }
 
         if (scale != 1f)
         {

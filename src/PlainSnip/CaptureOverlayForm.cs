@@ -328,12 +328,12 @@ public sealed class CaptureOverlayForm : Form
                     });
                     break;
                 }
-                case ToolBtn.Text:      // 粗体 T（无衬线，字号随按钮缩放）
+                case ToolBtn.Text:      // 粗体 T：横梁 + 竖杆实心矩形，占满与其他图标一致的 24 网格
                 {
-                    using var font = new Font("Segoe UI", S(15) * 0.92f, FontStyle.Bold, GraphicsUnit.Pixel);
-                    TextRenderer.DrawText(g, "T", font, r, ic,
-                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
-                        TextFormatFlags.NoPadding);
+                    float s = S(19) / 24f;
+                    using var b = new SolidBrush(ic);
+                    g.FillRectangle(b, cx - 9.5f * s, cy - 10.5f * s, 19 * s, 4f * s);   // 横梁
+                    g.FillRectangle(b, cx - 2f * s, cy - 10.5f * s, 4f * s, 18.5f * s); // 竖杆
                     break;
                 }
                 case ToolBtn.Mosaic:    // 描边方框 + 对角两格实心 = 打码
