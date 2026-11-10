@@ -277,15 +277,16 @@ public sealed class CaptureOverlayForm : Form
         return p;
     }
 
-    /// <summary>工具条图标（GDI 自绘，浅色底深色线，坐标按 DPI 缩放，全部按 rect 居中）。</summary>
+    /// <summary>工具条图标（GDI 自绘，Snipaste 风格：深灰实心、粗笔画，坐标按 DPI 缩放，全部按 rect 居中）。</summary>
     private void DrawToolIcon(Graphics g, ToolBtn id, Rectangle r, bool disabled)
     {
-        Color ic = disabled ? Color.FromArgb(198, 198, 198) : Color.FromArgb(64, 64, 64);
+        Color ic = disabled ? Color.FromArgb(200, 200, 200) : Color.FromArgb(60, 60, 60);
         float dpi = DeviceDpi / 96f;
         int U(int v) => (int)Math.Round(v * dpi);
         var smoothing = g.SmoothingMode;
         g.SmoothingMode = SmoothingMode.AntiAlias;          // 圆/弧/多边形统一抗锯齿
-        using var pen = new Pen(ic, MathF.Max(1f, 1.5f * dpi));
+        using var pen = new Pen(ic, MathF.Max(1.2f, 1.8f * dpi));
+        using var fill = new SolidBrush(ic);
         int cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
         try
         {
@@ -293,19 +294,12 @@ public sealed class CaptureOverlayForm : Form
         {
             case ToolBtn.Select:
             {
-                // 经典指针轮廓：顶点→左缘→缺口→尾翼→右肩→斜边回顶点（宽9×高14）
-                int lx = cx - U(4);
-                using var fill = new SolidBrush(ic);
-                g.FillPolygon(fill, new[]
-                {
-                    new Point(lx, cy + U(-7)),
-                    new Point(lx, cy + U(6)),
-                    new Point(lx + U(3), cy + U(3)),
-                    new Point(lx + U(5), cy + U(7)),
-                    new Point(lx + U(7), cy + U(6)),
-                    new Point(lx + U(5), cy + U(2)),
-                    new Point(lx + U(9), cy + U(2)),
-                });
+                // Snipaste 选择工具：圆角矩形轮廓 + 内部实心椭圆
+                var rect = new Rectangle(cx - U(8), cy - U(6), U(16), U(12));
+                using var path = RoundRect(rect, U(3));
+                g.DrawPath(pen, path);
+                using var ell = new SolidBrush(ic);
+                g.FillEllipse(ell, cx - U(7), cy - U(4), U(9), U(8));
                 break;
             }
             case ToolBtn.Rect:
@@ -316,82 +310,89 @@ public sealed class CaptureOverlayForm : Form
                 break;
             case ToolBtn.Arrow:
             {
-                g.DrawLine(pen, cx + U(-8), cy + U(6), cx + U(2), cy + U(-4));
-                using var fill = new SolidBrush(ic);
+                // Snipaste 箭头：上扬粗线 + 实心箭头头部 + 端点红点
+                using var thick = new Pen(ic, MathF.Max(1.5f, 2.2f * dpi));
+                g.DrawLine(thick, cx - U(7), cy + U(6), cx + U(2), cy - U(4));
                 g.FillPolygon(fill, new[]
                 {
-                    new Point(cx + U(8), cy + U(-8)), new Point(cx + U(-1), cy + U(-5)), new Point(cx + U(5), cy + U(1)),
+                    new Point(cx + U(7), cy + U(-7)), new Point(cx + U(-1), cy + U(-5)), new Point(cx + U(5), cy + U(1)),
                 });
+                using var red = new SolidBrush(Color.FromArgb(230, 40, 40));
+                g.FillEllipse(red, cx + U(1), cy + U(-8), U(5), U(5));
                 break;
             }
-            case ToolBtn.Pen:       // 铅笔：笔尖三角 + 笔杆四边形，斜向左下
+            case ToolBtn.Pen:       // 铅笔：粗笔杆（实心）+ 浅色笔尖
             {
-                using var fill = new SolidBrush(ic);
+                // 主体：斜 45° 四边形（右上粗笔杆→左下笔尖）
                 g.FillPolygon(fill, new[]
                 {
                     new Point(cx + U(-7), cy + U(7)),   // 笔尖
-                    new Point(cx + U(-3), cy + U(3)),   // 尖基上沿
-                    new Point(cx + U(5), cy + U(-7)),   // 杆顶上沿
-                    new Point(cx + U(7), cy + U(-5)),   // 杆顶下沿
-                    new Point(cx + U(-1), cy + U(5)),   // 尖基下沿
+                    new Point(cx + U(-2), cy + U(2)),
+                    new Point(cx + U(6), cy + U(-6)),   // 杆顶上沿
+                    new Point(cx + U(8), cy + U(-4)),   // 杆顶下沿
+                    new Point(cx + U(0), cy + U(4)),
+                });
+                using var tip = new SolidBrush(Color.FromArgb(200, 200, 200));
+                g.FillPolygon(tip, new[]      // 笔尖木色浅块
+                {
+                    new Point(cx + U(-7), cy + U(7)), new Point(cx + U(-2), cy + U(2)), new Point(cx + U(-3), cy + U(6)),
                 });
                 break;
             }
             case ToolBtn.Text:
-                TextRenderer.DrawText(g, "文", _uiFont, r, ic,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                // Snipaste 是无衬线粗 T
+                TextRenderer.DrawText(g, "T", new Font("Segoe UI", 11f * dpi, FontStyle.Bold, GraphicsUnit.Point),
+                    r, ic, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 break;
-            case ToolBtn.Mosaic:    // 3×3 像素块，深浅交错表示打码
+            case ToolBtn.Mosaic:    // 2×2 棋盘（深/浅对比强烈）
             {
-                int cell = U(5), gap2 = U(1);
-                int x0 = cx - (3 * cell + 2 * gap2) / 2, y0 = cy - (3 * cell + 2 * gap2) / 2;
-                int[] shade = { 64, 150, 100, 180, 64, 150, 100, 64, 180 };
-                for (int i = 0; i < 9; i++)
-                {
-                    using var fill = new SolidBrush(Color.FromArgb(shade[i], shade[i], shade[i]));
-                    g.FillRectangle(fill, x0 + (i % 3) * (cell + gap2), y0 + i / 3 * (cell + gap2), cell, cell);
-                }
+                int c2 = U(7);
+                using var light = new SolidBrush(Color.FromArgb(150, 150, 150));
+                g.FillRectangle(fill, cx - c2 - U(1), cy - c2 - U(1), c2, c2);
+                g.FillRectangle(light, cx + U(1), cy - c2 - U(1), c2, c2);
+                g.FillRectangle(light, cx - c2 - U(1), cy + U(1), c2, c2);
+                g.FillRectangle(fill, cx + U(1), cy + U(1), c2, c2);
                 break;
             }
             case ToolBtn.Serial:
             {
                 int d = U(16);
                 var box = new Rectangle(cx - d / 2, cy - d / 2, d, d);
-                using var fill = new SolidBrush(Color.FromArgb(0, 120, 215));
-                g.FillEllipse(fill, box);
+                using var blue = new SolidBrush(Color.FromArgb(0, 120, 215));
+                g.FillEllipse(blue, box);
                 DrawGlyphCentered(g, "1", _uiFont, box, Color.White);
                 break;
             }
-            case ToolBtn.Undo:      // ↶ 弧形箭头（右端→顶部→左端，头部在左下）
+            case ToolBtn.Undo:      // ↶ 粗弧 + 实心大头
             {
-                g.DrawArc(pen, cx + U(-6), cy + U(-5), U(12), U(10), 0, -170);
-                using var fill = new SolidBrush(ic);
+                using var thick = new Pen(ic, MathF.Max(1.5f, 2.2f * dpi));
+                g.DrawArc(thick, cx + U(-5), cy + U(-5), U(11), U(10), -20, -160);
                 g.FillPolygon(fill, new[]
                 {
-                    new Point(cx + U(-9), cy + U(2)),
-                    new Point(cx + U(-2), cy + U(-2)),
-                    new Point(cx + U(-4), cy + U(4)),
+                    new Point(cx + U(-9), cy + U(1)),
+                    new Point(cx + U(-1), cy + U(-3)),
+                    new Point(cx + U(-3), cy + U(5)),
                 });
                 break;
             }
             case ToolBtn.Redo:      // ↷ 镜像
             {
-                g.DrawArc(pen, cx + U(-6), cy + U(-5), U(12), U(10), 180, 170);
-                using var fill = new SolidBrush(ic);
+                using var thick = new Pen(ic, MathF.Max(1.5f, 2.2f * dpi));
+                g.DrawArc(thick, cx + U(-6), cy + U(-5), U(11), U(10), 200, 160);
                 g.FillPolygon(fill, new[]
                 {
-                    new Point(cx + U(9), cy + U(2)),
-                    new Point(cx + U(2), cy + U(-2)),
-                    new Point(cx + U(4), cy + U(4)),
+                    new Point(cx + U(9), cy + U(1)),
+                    new Point(cx + U(1), cy + U(-3)),
+                    new Point(cx + U(3), cy + U(5)),
                 });
                 break;
             }
             case ToolBtn.Color:
             {
                 int s2 = U(13);
-                using var fill = new SolidBrush(_session.StrokeColor);
+                using var cf = new SolidBrush(_session.StrokeColor);
                 var rect = new Rectangle(cx - s2 / 2, cy - s2 / 2, s2, s2);
-                g.FillRectangle(fill, rect);
+                g.FillRectangle(cf, rect);
                 g.DrawRectangle(pen, rect);
                 break;
             }
@@ -402,43 +403,47 @@ public sealed class CaptureOverlayForm : Form
                 g.DrawLine(thick, cx - w2 / 2, cy, cx + w2 / 2, cy);
                 break;
             }
-            case ToolBtn.Pin:       // 图钉：横梁 + 锥身 + 针尖
+            case ToolBtn.Pin:       // Snipaste 图钉（📌）：球头 + 外扩肩 + 收尖 + 针
             {
-                using var fill = new SolidBrush(ic);
-                g.FillRectangle(fill, cx + U(-5), cy + U(-8), U(10), U(3));
-                g.FillPolygon(fill, new[]
+                g.FillEllipse(fill, cx + U(-4), cy + U(-9), U(8), U(8));         // 球头
+                g.FillPolygon(fill, new[]                                        // 肩部外扩后收到针根
                 {
-                    new Point(cx + U(-4), cy + U(-5)), new Point(cx + U(4), cy + U(-5)),
-                    new Point(cx + U(2), cy), new Point(cx + U(-2), cy),
+                    new Point(cx + U(-2), cy + U(-3)),
+                    new Point(cx + U(6), cy + U(1)),
+                    new Point(cx + U(1), cy + U(4)),
+                    new Point(cx + U(-1), cy + U(4)),
+                    new Point(cx + U(-6), cy + U(1)),
                 });
-                g.DrawLine(pen, cx, cy, cx, cy + U(7));
+                using var thick = new Pen(ic, MathF.Max(1.5f, 2.2f * dpi));
+                g.DrawLine(thick, cx, cy + U(3), cx, cy + U(9));                // 针
                 break;
             }
-            case ToolBtn.Copy:      // 双页
+            case ToolBtn.Copy:      // 双页：后页描边 + 前页实心
             {
-                g.DrawRectangle(pen, cx + U(-6), cy + U(-7), U(9), U(11));
-                using var fill = new SolidBrush(Color.FromArgb(245, 245, 245));
-                var front = new Rectangle(cx + U(-2), cy + U(-4), U(9), U(11));
-                g.FillRectangle(fill, front);
-                g.DrawRectangle(pen, front);
+                g.DrawRectangle(pen, cx + U(-7), cy + U(-7), U(9), U(11));
+                g.FillRectangle(fill, cx + U(-1), cy + U(-4), U(8), U(11));
                 break;
             }
-            case ToolBtn.Save:      // 软盘
+            case ToolBtn.Save:      // 软盘：实心 + 镂空滑块/标签
             {
-                g.DrawPolygon(pen, new[]
+                g.FillPolygon(fill, new[]
                 {
                     new Point(cx + U(-7), cy + U(-7)), new Point(cx + U(3), cy + U(-7)),
                     new Point(cx + U(7), cy + U(-3)), new Point(cx + U(7), cy + U(7)),
                     new Point(cx + U(-7), cy + U(7)),
                 });
-                g.DrawRectangle(pen, cx + U(-3), cy + U(-7), U(6), U(4));
-                g.DrawRectangle(pen, cx + U(-4), cy + U(1), U(8), U(6));
+                using var hole = new SolidBrush(Color.White);
+                g.FillRectangle(hole, cx + U(-2), cy + U(-7), U(5), U(4));      // 写保护滑块
+                g.FillRectangle(hole, cx + U(-4), cy + U(0), U(8), U(7));       // 标签
                 break;
             }
-            case ToolBtn.Cancel:    // ×
-                g.DrawLine(pen, cx + U(-5), cy + U(-5), cx + U(5), cy + U(5));
-                g.DrawLine(pen, cx + U(5), cy + U(-5), cx + U(-5), cy + U(5));
+            case ToolBtn.Cancel:    // × 粗
+            {
+                using var thick = new Pen(ic, MathF.Max(1.5f, 2.2f * dpi));
+                g.DrawLine(thick, cx + U(-5), cy + U(-5), cx + U(5), cy + U(5));
+                g.DrawLine(thick, cx + U(5), cy + U(-5), cx + U(-5), cy + U(5));
                 break;
+            }
         }
         }
         finally
