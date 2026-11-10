@@ -291,13 +291,10 @@ public sealed class CaptureOverlayForm : Form
 
         string? glyph = id switch
         {
-            ToolBtn.Select => "Move",     // move：四向箭头，表意「移动/调整选区」
+            ToolBtn.Select => "Select",   // mouse-pointer-2：光标箭头 = 选择
             ToolBtn.Rect => "Rect",       // square
             ToolBtn.Ellipse => "Ellipse", // circle
-            ToolBtn.Arrow => "Arrow",     // arrow-up-right
             ToolBtn.Pen => "Pen",         // pencil
-            ToolBtn.Text => "Text",       // type
-            ToolBtn.Mosaic => "Mosaic",   // grid-2x2：方框内分四格 = 打码
             ToolBtn.Undo => "Undo",       // undo-2
             ToolBtn.Redo => "Redo",       // redo-2
             ToolBtn.Pin => "Pin",         // pin
@@ -318,6 +315,39 @@ public sealed class CaptureOverlayForm : Form
         {
             switch (id)
             {
+                case ToolBtn.Arrow:     // 粗斜线 + 实心箭头头（与画布箭头标注同构）
+                {
+                    using var thick = new Pen(ic, IconStrokeWidth * 1.2f) { EndCap = LineCap.Round };
+                    g.DrawLine(thick, cx + U(-7), cy + U(7), cx + U(1), cy + U(-1));
+                    using var head = new SolidBrush(ic);
+                    g.FillPolygon(head, new[]
+                    {
+                        new Point(cx + U(8), cy + U(-8)),
+                        new Point(cx + U(-2), cy + U(-6)),
+                        new Point(cx + U(6), cy + U(2)),
+                    });
+                    break;
+                }
+                case ToolBtn.Text:      // 粗体 T（无衬线，字号随按钮缩放）
+                {
+                    using var font = new Font("Segoe UI", S(15) * 0.92f, FontStyle.Bold, GraphicsUnit.Pixel);
+                    TextRenderer.DrawText(g, "T", font, r, ic,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.NoPadding);
+                    break;
+                }
+                case ToolBtn.Mosaic:    // 描边方框 + 对角两格实心 = 打码
+                {
+                    int s2 = U(15);
+                    var box = new Rectangle(cx - s2 / 2, cy - s2 / 2, s2, s2);
+                    using var fill = new SolidBrush(ic);
+                    g.FillRectangle(fill, box.X, box.Y, box.Width / 2, box.Height / 2);
+                    g.FillRectangle(fill, box.X + box.Width / 2, box.Y + box.Height / 2,
+                        box.Width / 2, box.Height / 2);
+                    using var pen = new Pen(ic, IconStrokeWidth);
+                    g.DrawRectangle(pen, box);
+                    break;
+                }
                 case ToolBtn.Serial:    // 描边圆 + 数字，与线稿图标同粗细
                 {
                     int d = U(17);

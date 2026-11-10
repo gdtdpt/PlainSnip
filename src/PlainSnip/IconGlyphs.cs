@@ -12,14 +12,9 @@ internal static class IconGlyphs
 {
     private static readonly Dictionary<string, string[]> Map = new(StringComparer.Ordinal)
     {
-        ["Move"] = new[]
+        ["Select"] = new[]
         {
-            "M12 2v20",
-            "m15 19-3 3-3-3",
-            "m19 9 3 3-3 3",
-            "M2 12h20",
-            "m5 9-3 3 3 3",
-            "m9 5 3-3 3 3",
+            "M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z",
         },
         ["Rect"] = new[]
         {
@@ -29,27 +24,10 @@ internal static class IconGlyphs
         {
             "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0Z",
         },
-        ["Arrow"] = new[]
-        {
-            "M7 7h10v10",
-            "M7 17 17 7",
-        },
         ["Pen"] = new[]
         {
             "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
             "m15 5 4 4",
-        },
-        ["Text"] = new[]
-        {
-            "M12 4v16",
-            "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2",
-            "M9 20h6",
-        },
-        ["Mosaic"] = new[]
-        {
-            "M12 3v18",
-            "M3 12h18",
-            "M5 3H19A2 2 0 0 1 21 5V19A2 2 0 0 1 19 21H5A2 2 0 0 1 3 19V5A2 2 0 0 1 5 3Z",
         },
         ["Undo"] = new[]
         {

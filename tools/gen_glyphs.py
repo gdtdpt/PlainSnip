@@ -17,13 +17,10 @@ OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 
 # C# 里的键名 -> SVG 文件名（均为 Lucide 图标名）
 MAPPING = {
-    "Move":    "move",
+    "Select":  "mouse-pointer-2",
     "Rect":    "square",
     "Ellipse": "circle",
-    "Arrow":   "arrow-up-right",
     "Pen":     "pencil",
-    "Text":    "type",
-    "Mosaic":  "grid-2x2",
     "Undo":    "undo-2",
     "Redo":    "redo-2",
     "Pin":     "pin",
