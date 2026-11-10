@@ -15,12 +15,11 @@ MAPPING = {
     "Rect":    "square",
     "Ellipse": "circle",
     "Pen":     "pencil-fill",
-    "Mosaic":  "grid-fill",
     "Undo":    "arrow-counterclockwise",
     "Redo":    "arrow-clockwise",
-    "Pin":     "pin-fill",
-    "Save":    "floppy-fill",
-    "Copy":    "files",
+    "Pin":     "pin",
+    "Save":    "floppy",
+    "Copy":    "copy",
     "Cancel":  "x-lg",
 }
 

@@ -294,12 +294,11 @@ public sealed class CaptureOverlayForm : Form
             ToolBtn.Rect => "Rect",       // square
             ToolBtn.Ellipse => "Ellipse", // circle
             ToolBtn.Pen => "Pen",         // pencil-fill
-            ToolBtn.Mosaic => "Mosaic",   // grid-fill（2×2 方块）
             ToolBtn.Undo => "Undo",       // arrow-counterclockwise
             ToolBtn.Redo => "Redo",       // arrow-clockwise
-            ToolBtn.Pin => "Pin",         // pin-fill
-            ToolBtn.Save => "Save",       // floppy-fill
-            ToolBtn.Copy => "Copy",       // files
+            ToolBtn.Pin => "Pin",         // pin（线稿大头钉）
+            ToolBtn.Save => "Save",       // floppy（线稿软盘）
+            ToolBtn.Copy => "Copy",       // copy（线稿双页，evenodd 镂空）
             ToolBtn.Cancel => "Cancel",   // x-lg
             _ => null,
         };
@@ -336,6 +335,16 @@ public sealed class CaptureOverlayForm : Form
                     using var b = new SolidBrush(ic);
                     g.FillRectangle(b, bar);
                     g.FillRectangle(b, stem);
+                    break;
+                }
+                case ToolBtn.Mosaic:    // 紧贴的 2×2 棋盘（对角两格实心），即打码/透明网格符号
+                {
+                    float s = S(18) / 16f;
+                    float cell = 7 * s;
+                    float x0 = cx - cell, y0 = cy - cell;
+                    using var b = new SolidBrush(ic);
+                    g.FillRectangle(b, x0, y0, cell, cell);              // 左上
+                    g.FillRectangle(b, x0 + cell, y0 + cell, cell, cell); // 右下
                     break;
                 }
                 case ToolBtn.Serial:

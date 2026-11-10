@@ -10,7 +10,9 @@ public static class IconGlyphRenderer
     /// <summary>把 d 数据渲染为 GraphicsPath（已按 scale 缩放，原点 (0,0)，占 16*scale 见方）。</summary>
     public static GraphicsPath Build(string d, float scale)
     {
-        var path = new GraphicsPath { FillMode = FillMode.Winding };
+        // Bootstrap Icons 按 fill-rule="evenodd" 设计（copy/undo 等含镂空轮廓），
+        // GDI+ 对应 FillMode.Alternate（奇偶填充）
+        var path = new GraphicsPath { FillMode = FillMode.Alternate };
         var toks = Tokenize(d);
         int i = 0;
         var cur = new PointF(0, 0);
