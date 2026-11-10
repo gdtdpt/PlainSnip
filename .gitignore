@@ -3,3 +3,7 @@ obj/
 dist/
 *.user
 .vs/
+
+# 本地调试/冒烟截图产物（memory 日志保留）
+.workbuddy/*
+!.workbuddy/memory/

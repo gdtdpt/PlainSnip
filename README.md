@@ -43,6 +43,10 @@
 - **双击后没反应**：PlainSnip 是单实例程序，检查托盘区是否已有图标
 - **热键没反应**：确认没被其他截图工具（QQ/微信/Snipaste）占用；可在设置中更换
 
+## 开源引用
+
+- [Bootstrap Icons v1](https://icons.getbootstrap.com/)（MIT License）——工具条矢量图标路径数据，内嵌于 `src/PlainSnip/IconGlyphs.cs`
+
 ## 开发者
 
 构建、自测、仓库结构见 `docs/dev-guide.md`。
