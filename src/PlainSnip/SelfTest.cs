@@ -198,6 +198,113 @@ public static class SelfTest
             Check("标注渲染器：全部种类可绘制", true);
         }
 
+        // ---- M4 滚动拼接（ScrollCaptureSession，docs/m4-scroll-design.md §6） ----
+        {
+            static Bitmap MakePage(int w, int h, int rowOffset = 0)
+            {
+                var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var data = bmp.LockBits(new Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.WriteOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                int rowBytes = w * 4;
+                var row = new byte[rowBytes];
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        byte v = (byte)((y + rowOffset) * 31 + x * 7);
+                        row[x * 4] = v; row[x * 4 + 1] = v; row[x * 4 + 2] = v; row[x * 4 + 3] = 255;
+                    }
+                    Marshal.Copy(row, 0, IntPtr.Add(data.Scan0, y * data.Stride), rowBytes);
+                }
+                bmp.UnlockBits(data);
+                return bmp;
+            }
+
+            static Bitmap Crop(Bitmap src, int top, int h)
+                => src.Clone(new Rectangle(0, top, src.Width, h), System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            static Bitmap NoisyCrop(Bitmap src, int top, int h, Random rng)
+            {
+                var f = Crop(src, top, h);
+                var rect = new Rectangle(0, h - 20, f.Width, 20);   // 底部 20 行噪声（模拟浮动提示）
+                var data = f.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly,
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var row = new byte[f.Width * 4];
+                for (int y = 0; y < 20; y++)
+                {
+                    rng.NextBytes(row);
+                    row[f.Width * 4 - 1] = 255;
+                    Marshal.Copy(row, 0, IntPtr.Add(data.Scan0, y * data.Stride), row.Length);
+                }
+                f.UnlockBits(data);
+                return f;
+            }
+
+            static bool BitmapsEqual(Bitmap a, Bitmap b)
+            {
+                if (a.Width != b.Width || a.Height != b.Height) return false;
+                int rowBytes = a.Width * 4;
+                var ra = new byte[rowBytes * a.Height];
+                var rb = new byte[rowBytes * b.Height];
+                foreach (var (bmp, buf) in new[] { (a, ra), (b, rb) })
+                {
+                    var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height),
+                        System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                    for (int y = 0; y < bmp.Height; y++)
+                        Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), buf, y * rowBytes, rowBytes);
+                    bmp.UnlockBits(data);
+                }
+                return ra.AsSpan().SequenceEqual(rb.AsSpan());
+            }
+
+            const int PW = 300, PH = 1300, FH = 300, STEP = 100;
+            using var page = MakePage(PW, PH);
+
+            // 主链：10 帧（步长 100、重叠 200）拼出 [0,1200)
+            using var session = new ScrollCaptureSession();
+            ScrollFrameResult last = default;
+            for (int i = 0; i < 10; i++)
+            {
+                using var f = Crop(page, i * STEP, FH);
+                last = session.ProcessFrame(f);
+                if (i == 0 && last.Status != ScrollFrameStatus.FirstFrame) break;
+            }
+            Check("滚动拼接：10 帧主链拼出 1200px", last.Status == ScrollFrameStatus.Appended && last.ResultHeight == 1200);
+
+            using var pageHead = Crop(page, 0, 1200);
+            Check("滚动拼接：主链结果与原长图逐行相等", BitmapsEqual(pageHead, session.Result!));
+
+            // 到底：重复最后一帧 → NoChange 且高度不变
+            using var tail = Crop(page, 9 * STEP, FH);
+            var dup = session.ProcessFrame(tail);
+            Check("滚动拼接：重复帧判定 NoChange", dup.Status == ScrollFrameStatus.NoChange && dup.ResultHeight == 1200);
+
+            // 失败：黑帧与结果无任何重叠 → MatchFailed，结果保留
+            using var black = new Bitmap(PW, FH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var fail = session.ProcessFrame(black);
+            Check("滚动拼接：无重叠帧判定 MatchFailed", fail.Status == ScrollFrameStatus.MatchFailed && fail.ResultHeight == 1200);
+
+            // 回滚恢复（D6）：回滚后继续向下滚，帧与结果底部仍有重叠即可自然续拼
+            using var resume = Crop(page, 1000, FH);
+            var rec = session.ProcessFrame(resume);
+            Check("滚动拼接：失败后回滚续拼到 1300px",
+                rec.Status == ScrollFrameStatus.Appended && rec.ResultHeight == PH && BitmapsEqual(page, session.Result!));
+
+            // 底部噪声（AutoIgnoreBottomEdge 思路）：帧底 20 行噪声不破坏拼接
+            using var page2 = MakePage(PW, 800);
+            using var session2 = new ScrollCaptureSession();
+            var rng = new Random(12345);
+            var noiseLast = default(ScrollFrameResult);
+            for (int i = 0; i < 3; i++)
+            {
+                using var f = NoisyCrop(page2, i * STEP, FH, rng);
+                noiseLast = session2.ProcessFrame(f);
+            }
+            Check("滚动拼接：底部噪声帧拼出 500px", noiseLast.ResultHeight == 500);
+            using var clean = Crop(page2, 0, 480);
+            Check("滚动拼接：噪声区之前内容逐行相等", BitmapsEqual(clean, Crop(session2.Result!, 0, 480)));
+        }
+
         // ---- 开机自启注册表可读（只读，不写） ----
         try
         {
