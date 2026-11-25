@@ -43,7 +43,6 @@ public sealed class ScrollCaptureSession : IDisposable
     private Bitmap? _result;
     private Bitmap? _lastFrame;          // 上一帧（去重 + 到底检测）
     private int _sameStreak;             // 连续相同帧计数
-    private int _bestIgnoreBottom;       // 底部忽略行历史最佳（防边缘抖动来回横跳）
     private int _lastViewTopY = -1;
 
     public int ResultHeight => _result?.Height ?? 0;
@@ -152,7 +151,7 @@ public sealed class ScrollCaptureSession : IDisposable
         int ignoreSide = Math.Clamp(Math.Max(50, w / 20), 50, w / 3);
 
         // 底部忽略边（AutoIgnoreBottomEdge 思路）：两图自底向上找第一行差异，
-        // 忽略行数 = 基线(50 或 h/10) + 差异行序号，与历史最佳取 max（防边缘抖动来回横跳）
+        // 忽略行数 = 基线(50 或 h/10)，上限 h/3（防边缘抖动干扰对齐）
         int ignoreBottomMax = h / 3;
         int ignoreBottom = Math.Max(50, h / 10);
         {
@@ -169,7 +168,6 @@ public sealed class ScrollCaptureSession : IDisposable
                     break;
                 }
             }
-            if (_bestIgnoreBottom > ignoreBottom) ignoreBottom = _bestIgnoreBottom;
             ignoreBottom = Math.Min(ignoreBottom, ignoreBottomMax);
         }
 

@@ -7,8 +7,10 @@
 
 ## 安装
 
-1. 安装 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)（x64）
-2. 拷贝 `PlainSnip.exe` 到任意目录，双击运行
+1. 从 Release 下载 `PlainSnip-v0.1.0.zip` 解压（或自取 `dist\PlainSnip.exe`）
+2. 双击 `PlainSnip.exe` 运行——**免安装运行时、免管理员**，托盘常驻无主窗口
+
+> exe 为 self-contained 单文件（含 .NET 8 运行时，约 135MB），无需安装 .NET Desktop Runtime
 
 ## 功能总览
 
