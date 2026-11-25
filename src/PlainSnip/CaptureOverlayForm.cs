@@ -429,6 +429,7 @@ public sealed class CaptureOverlayForm : Form
             ToolBtn.Save => "Save",       // save（软盘）
             ToolBtn.Copy => "Copy",       // copy（双页）
             ToolBtn.Cancel => "Cancel",   // x
+            ToolBtn.Scroll => "Scroll",   // gallery-vertical：纵向长框 = 长截图
             ToolBtn.LsCopy => "Copy",
             ToolBtn.LsSave => "Save",
             ToolBtn.LsPin => "Pin",
@@ -509,24 +510,6 @@ public sealed class CaptureOverlayForm : Form
                         EndCap = LineCap.Round,
                     };
                     g.DrawLine(thick, cx - w2 / 2, cy, cx + w2 / 2, cy);
-                    break;
-                }
-                case ToolBtn.Scroll:    // 向下箭头 + 底部托盘 = 长截图（滚动拼接）
-                {
-                    using var pen = new Pen(ic, IconStrokeWidth)
-                    {
-                        StartCap = LineCap.Round,
-                        EndCap = LineCap.Round,
-                        LineJoin = LineJoin.Round,
-                    };
-                    g.DrawLine(pen, cx, cy - U(9), cx, cy + U(3));
-                    g.DrawLines(pen, new[]
-                    {
-                        new Point(cx - U(6), cy - U(3)),
-                        new Point(cx, cy + U(4)),
-                        new Point(cx + U(6), cy - U(3)),
-                    });
-                    g.DrawLine(pen, cx - U(9), cy + U(9), cx + U(9), cy + U(9));
                     break;
                 }
                 case ToolBtn.LsAuto:    // 双 chevron 向下 = 自动滚动

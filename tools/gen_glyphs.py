@@ -27,6 +27,7 @@ MAPPING = {
     "Save":    "save",
     "Copy":    "copy",
     "Cancel":  "x",
+    "Scroll":  "gallery-vertical",   # 长截图：纵向长框 + 上下短轨线
 }
 
 NS = "{http://www.w3.org/2000/svg}"

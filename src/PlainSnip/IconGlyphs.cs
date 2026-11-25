@@ -60,6 +60,12 @@ internal static class IconGlyphs
             "M18 6 6 18",
             "m6 6 12 12",
         },
+        ["Scroll"] = new[]
+        {
+            "M3 2h18",
+            "M5 6H19A2 2 0 0 1 21 8V16A2 2 0 0 1 19 18H5A2 2 0 0 1 3 16V8A2 2 0 0 1 5 6Z",
+            "M3 22h18",
+        },
     };
 
     public static string[]? Get(string name) => Map.TryGetValue(name, out var v) ? v : null;
