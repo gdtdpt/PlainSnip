@@ -1,4 +1,4 @@
-﻿# 生成 src/PlainSnip/App.ico（虚线选框 + 剪刀点缀，多尺寸）
+﻿# 生成 src/PlainSnip/App.ico（PixPin 风格：蓝紫渐变底 + 白色对角取景框 + 中心快门圆点，多尺寸）
 # 用法: powershell -NoProfile -ExecutionPolicy Bypass -File tools\make_icon.ps1
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Drawing
@@ -18,7 +18,8 @@ function New-RoundedPath([System.Drawing.RectangleF]$r, [float]$rad) {
     return $p
 }
 
-function New-IconBitmap([int]$size, [bool]$withScissors, [bool]$solidFrame) {
+# $weight/$arm/$dot 均为 256 设计坐标系：线宽 / 角臂长 / 中心圆点半径
+function New-IconBitmap([int]$size, [int]$weight, [int]$arm, [int]$dot) {
     $ss  = 4
     $big = $size * $ss
     $bmp = New-Object System.Drawing.Bitmap($big, $big)
@@ -28,60 +29,35 @@ function New-IconBitmap([int]$size, [bool]$withScissors, [bool]$solidFrame) {
     $scale = $big / 256.0
     $g.ScaleTransform([float]$scale, [float]$scale)
 
-    # 背景：垂直渐变圆角矩形
+    # 背景：对角渐变圆角矩形（蓝 → 靛紫）
     $bgRect = New-Object System.Drawing.RectangleF(10, 10, 236, 236)
     $bgPath = New-RoundedPath $bgRect 58
     $grad = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
         $bgRect,
-        [System.Drawing.Color]::FromArgb(255, 58, 66, 76),
-        [System.Drawing.Color]::FromArgb(255, 30, 35, 42), 90)
+        [System.Drawing.Color]::FromArgb(255, 82, 140, 255),
+        [System.Drawing.Color]::FromArgb(255, 108, 92, 246), 45)
     $g.FillPath($grad, $bgPath)
-    $edge = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(40, 255, 255, 255), 3)
+    $edge = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(45, 255, 255, 255), 3)
     $g.DrawPath($edge, $bgPath)
 
-    # 白色虚线选框
-    $frameRect = New-Object System.Drawing.RectangleF(44, 46, 136, 104)
-    if ($solidFrame) {
-        $fp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(245, 255, 255, 255), 7)
-        $fp.StartCap = 'Round'; $fp.EndCap = 'Round'
-        $g.DrawRectangle($fp, $frameRect.X, $frameRect.Y, $frameRect.Width, $frameRect.Height)
-        $fp.Dispose()
+    # 白色对角取景框：四个 L 形角括号（对角分布），圆头粗线
+    $f0 = 66; $f1 = 190   # 取景框左上/右下
+    $fp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(250, 255, 255, 255), $weight)
+    $fp.StartCap = 'Round'; $fp.EndCap = 'Round'
+    $fp.LineJoin = 'Round'
+    foreach ($corner in @(
+        @{ X = $f0; Y = $f0; DX = 1;  DY = 1  },   # 左上：横臂向右、竖臂向下
+        @{ X = $f1; Y = $f0; DX = -1; DY = 1  },   # 右上
+        @{ X = $f1; Y = $f1; DX = -1; DY = -1 },   # 右下
+        @{ X = $f0; Y = $f1; DX = 1;  DY = -1 })) { # 左下
+        $g.DrawLine($fp, $corner.X, $corner.Y, ($corner.X + $arm * $corner.DX), $corner.Y)
+        $g.DrawLine($fp, $corner.X, $corner.Y, $corner.X, ($corner.Y + $arm * $corner.DY))
     }
-    else {
-        $fp = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(245, 255, 255, 255), 9)
-        $fp.DashStyle   = [System.Drawing.Drawing2D.DashStyle]::Custom
-        $fp.DashPattern = [float[]]@(2.2, 1.7)
-        $fp.StartCap = 'Round'; $fp.EndCap = 'Round'
-        $g.DrawRectangle($fp, $frameRect.X, $frameRect.Y, $frameRect.Width, $frameRect.Height)
-        $fp.Dispose()
-    }
+    $fp.Dispose()
 
-    # 四角手柄（白方块 + 深色描边）
-    $hs = 24
-    $dark = [System.Drawing.Color]::FromArgb(255, 30, 35, 42)
-    foreach ($c in @(
-        @{ X = $frameRect.Left;  Y = $frameRect.Top },
-        @{ X = $frameRect.Right; Y = $frameRect.Top },
-        @{ X = $frameRect.Right; Y = $frameRect.Bottom },
-        @{ X = $frameRect.Left;  Y = $frameRect.Bottom })) {
-        $hr = New-Object System.Drawing.RectangleF(($c.X - $hs / 2), ($c.Y - $hs / 2), $hs, $hs)
-        $g.FillRectangle([System.Drawing.Brushes]::White, $hr)
-        $g.DrawRectangle((New-Object System.Drawing.Pen($dark, 4)), $hr.X, $hr.Y, $hr.Width, $hr.Height)
-    }
-
-    # 剪刀点缀（右下角，仅 >=32px；蓝色）
-    if ($withScissors) {
-        $blue = [System.Drawing.Color]::FromArgb(255, 84, 158, 255)
-        $sp = New-Object System.Drawing.Pen($blue, 10)
-        $sp.StartCap = 'Round'; $sp.EndCap = 'Round'
-        # 刀刃：交叉两线
-        $g.DrawLine($sp, 164, 158, 208, 200)
-        $g.DrawLine($sp, 216, 158, 172, 200)
-        # 指环：两个圆
-        $g.DrawEllipse($sp, 198, 200, 28, 28)
-        $g.DrawEllipse($sp, 154, 200, 28, 28)
-        $sp.Dispose()
-    }
+    # 中心快门圆点
+    $c = ($f0 + $f1) / 2
+    $g.FillEllipse([System.Drawing.Brushes]::White, ($c - $dot / 2), ($c - $dot / 2), $dot, $dot)
 
     $grad.Dispose(); $edge.Dispose(); $bgPath.Dispose(); $g.Dispose()
 
@@ -126,18 +102,18 @@ function ConvertTo-IcoDib([System.Drawing.Bitmap]$bmp) {
     return ,($ms.ToArray())   # 前置逗号防 PowerShell 把 byte[] 展开进管道
 }
 
-# ---- 组装 ICO：16/24/32/48 DIB，256 PNG ----
+# ---- 组装 ICO：小尺寸加粗线（缩小后仍可辨），256 精细 ----
 $entries = @(
-    @{ Size = 16;  Scissors = $false; Solid = $true  },
-    @{ Size = 24;  Scissors = $false; Solid = $false },
-    @{ Size = 32;  Scissors = $true;  Solid = $false },
-    @{ Size = 48;  Scissors = $true;  Solid = $false },
-    @{ Size = 256; Scissors = $true;  Solid = $false }
+    @{ Size = 16;  Weight = 22; Arm = 44; Dot = 32 },
+    @{ Size = 24;  Weight = 20; Arm = 42; Dot = 28 },
+    @{ Size = 32;  Weight = 19; Arm = 42; Dot = 26 },
+    @{ Size = 48;  Weight = 17; Arm = 40; Dot = 24 },
+    @{ Size = 256; Weight = 15; Arm = 36; Dot = 22 }
 )
 
 $blobs = @()
 foreach ($e in $entries) {
-    $bmp = New-IconBitmap $e.Size $e.Scissors $e.Solid
+    $bmp = New-IconBitmap $e.Size $e.Weight $e.Arm $e.Dot
     if ($e.Size -eq 256) {
         $ms = New-Object System.IO.MemoryStream
         $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
