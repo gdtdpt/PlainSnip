@@ -28,6 +28,8 @@ public sealed class CaptureOverlayForm : Form
     private readonly HashSet<ToolBtn> _tbDisabled = new();
     private Rectangle _toolbarBounds = Rectangle.Empty;   // 悬停隐藏放大镜用
     private ToolBtn? _hoverBtn;
+    private readonly System.Windows.Forms.Timer _tooltipTimer = new() { Interval = 550 };   // 悬停延时后显示气泡
+    private bool _tooltipVisible;
     private TextBox? _textEditor;                         // 文字标注编辑框
     private Point _textVirtual;
     private Point _cursorVirtual;                    // 光标虚拟桌面物理坐标
@@ -55,6 +57,7 @@ public sealed class CaptureOverlayForm : Form
         _uiFont = new Font("Microsoft YaHei UI", 10f); // pt 值由 GDI 随窗口 DPI 换算
 
         _feedbackTimer.Tick += (_, _) => { _colorCopiedFeedback = null; _feedbackTimer.Stop(); Invalidate(); };
+        _tooltipTimer.Tick += (_, _) => { _tooltipTimer.Stop(); _tooltipVisible = true; Invalidate(); };
     }
 
     // ---- 坐标助手 ----
@@ -121,6 +124,7 @@ public sealed class CaptureOverlayForm : Form
         if (_session.LongShotActive)
         {
             DrawLongShot(g);
+            DrawTooltipIfHover(g);
             return;
         }
 
@@ -188,7 +192,7 @@ public sealed class CaptureOverlayForm : Form
             }
         }
 
-        if (_interactive) DrawMagnifier(g);
+        if (_interactive) { DrawMagnifier(g); DrawTooltipIfHover(g); }
     }
 
     private void DrawSizeLabel(Graphics g, Rectangle selLocal, string text)
@@ -589,6 +593,79 @@ public sealed class CaptureOverlayForm : Form
         return null;
     }
 
+    // ---- 工具条气泡提示 ----
+
+    /// <summary>更新悬停按钮并重置气泡计时（悬停 ≥550ms 才显示，避免扫过时闪现）。</summary>
+    private void SetHover(ToolBtn? hover)
+    {
+        if (hover == _hoverBtn) return;
+        _hoverBtn = hover;
+        _tooltipVisible = false;
+        _tooltipTimer.Stop();
+        if (hover != null) _tooltipTimer.Start();
+        Invalidate();
+    }
+
+    private static string? TooltipText(ToolBtn id) => id switch
+    {
+        ToolBtn.Select => "移动选区",
+        ToolBtn.Rect => "矩形",
+        ToolBtn.Ellipse => "椭圆",
+        ToolBtn.Arrow => "箭头",
+        ToolBtn.Pen => "画笔",
+        ToolBtn.Text => "文字",
+        ToolBtn.Mosaic => "马赛克",
+        ToolBtn.Serial => "序号标注",
+        ToolBtn.Undo => "撤销（Ctrl+Z）",
+        ToolBtn.Redo => "重做（Ctrl+Y）",
+        ToolBtn.Color => "颜色",
+        ToolBtn.Width => "线宽",
+        ToolBtn.Scroll => "长截图（L）",
+        ToolBtn.Pin => "贴图",
+        ToolBtn.Copy => "复制（Enter）",
+        ToolBtn.Save => "保存（Ctrl+S）",
+        ToolBtn.Cancel => "取消截图（Esc）",
+        ToolBtn.LsCopy => "复制长图（Ctrl+C）",
+        ToolBtn.LsSave => "保存长图（Ctrl+S）",
+        ToolBtn.LsPin => "钉成长贴图",
+        ToolBtn.LsAuto => "自动滚动（A）",
+        ToolBtn.LsExit => "退出长截图（Esc）",
+        _ => null,
+    };
+
+    /// <summary>--shot 冒烟专用：强制显示第 btnIndex 个按钮的气泡（_tbItems 已由首次绘制填充）。</summary>
+    internal void SmokeTooltip(int btnIndex)
+    {
+        if (btnIndex < 0 || btnIndex >= _tbItems.Count) return;
+        _hoverBtn = _tbItems[btnIndex].Id;
+        _tooltipVisible = true;
+        Invalidate();
+    }
+
+    /// <summary>悬停超时的按钮下方画气泡（贴底翻转到上方），随遮罩窗主题用深色样式。</summary>
+    private void DrawTooltipIfHover(Graphics g)
+    {
+        if (!_tooltipVisible || _hoverBtn == null) return;
+        string? text = TooltipText(_hoverBtn.Value);
+        if (text == null) return;
+        var btn = RectOf(_hoverBtn.Value);
+        if (btn.IsEmpty) return;
+
+        var size = TextRenderer.MeasureText(text, _uiFont);
+        var box = new Size(size.Width + S(16), size.Height + S(6));
+        Point pos = new(btn.X + btn.Width / 2 - box.Width / 2, btn.Bottom + S(4));
+        if (pos.Y + box.Height > ClientSize.Height) pos.Y = btn.Y - S(4) - box.Height;
+        pos.X = Math.Clamp(pos.X, 0, Math.Max(0, ClientSize.Width - box.Width));
+
+        using var path = RoundRect(new Rectangle(pos, box), S(4));
+        using var bg = new SolidBrush(Color.FromArgb(242, 26, 26, 26));
+        g.FillPath(bg, path);
+        using var border = new Pen(Color.FromArgb(96, 96, 96));
+        g.DrawPath(border, path);
+        TextRenderer.DrawText(g, text, _uiFont, new Rectangle(pos, box), Color.White,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+
     private Rectangle RectOf(ToolBtn id)
     {
         foreach (var (bid, rect) in _tbItems)
@@ -825,6 +902,7 @@ public sealed class CaptureOverlayForm : Form
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
+        _tooltipVisible = false;   // 按下即隐藏气泡（点按钮/开始交互）
         if (!_interactive) { _session.SwitchInteractive(this); }
 
         var v = VirtualFromClient(e.Location);
@@ -897,8 +975,7 @@ public sealed class CaptureOverlayForm : Form
             // 长截图态：只处理工具条悬停高亮（洞内鼠标事件直达目标窗口）
             if (!_interactive) { _session.SwitchInteractive(this); }
             Cursor = HitToolbar(e.Location) != null ? Cursors.Hand : Cursors.Default;
-            var hoverLs = HitToolbar(e.Location);
-            if (hoverLs != _hoverBtn) { _hoverBtn = hoverLs; }
+            SetHover(HitToolbar(e.Location));
             Invalidate();
             return;
         }
@@ -922,13 +999,8 @@ public sealed class CaptureOverlayForm : Form
             _ => Cursors.Cross,
         };
 
-        // 工具条悬停高亮
-        var hover = HitToolbar(local);
-        if (hover != _hoverBtn)
-        {
-            _hoverBtn = hover;
-            Invalidate();
-        }
+        // 工具条悬停高亮 + 气泡计时
+        SetHover(HitToolbar(local));
 
         if (_session.State == CaptureSession.SelState.Annotating)
         {
@@ -1122,5 +1194,7 @@ public sealed class CaptureOverlayForm : Form
         _uiFont.Dispose();
         _feedbackTimer.Stop();
         _feedbackTimer.Dispose();
+        _tooltipTimer.Stop();
+        _tooltipTimer.Dispose();
     }
 }

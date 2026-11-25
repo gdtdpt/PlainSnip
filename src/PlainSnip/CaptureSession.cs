@@ -139,6 +139,11 @@ public sealed class CaptureSession : IDisposable
             t.Tick += (_, _) => { t.Stop(); Cancel(); };
             t.Start();
 
+            // --shot 冒烟：1.2s 后模拟悬停「长截图」按钮（第 13 个），验证气泡渲染
+            var tt = new System.Windows.Forms.Timer { Interval = 1200 };
+            tt.Tick += (_, _) => { tt.Stop(); tt.Dispose(); _interactive?.SmokeTooltip(12); };
+            tt.Start();
+
             if (DebugScroll)
             {
                 // --scroll 冒烟：框选 400ms 后进入长截图态（验证挖洞/预览/工具条），随 6s 定时退出
