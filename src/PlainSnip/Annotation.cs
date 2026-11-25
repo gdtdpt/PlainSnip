@@ -165,7 +165,12 @@ public static class AnnotationRenderer
                     pen.StartCap = LineCap.Round;
                     pen.EndCap = LineCap.Round;
                     pen.LineJoin = LineJoin.Round;
-                    g.DrawLines(pen, rec.Points);
+                    // 基数样条（经过全部采样点）代替折线：手写笔迹平滑，无折角。
+                    // 两点退化为直线；tension 取 0.45 兼顾平滑与不偏离采样轨迹。
+                    if (rec.Points.Length == 2)
+                        g.DrawLine(pen, rec.Points[0], rec.Points[1]);
+                    else
+                        g.DrawCurve(pen, rec.Points, 0.45f);
                     break;
                 }
                 case AnnotationTool.Text:

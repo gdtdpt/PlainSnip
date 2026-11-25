@@ -106,6 +106,19 @@ public sealed class CaptureSession : IDisposable
                 _history.Push(new Annotation(AnnotationTool.Text,
                     new[] { new Point(Selection.X + Selection.Width / 10, Selection.Y + Selection.Height * 8 / 10) },
                     Color.FromArgb(255, 255, 200, 0), Math.Max(18, Selection.Height / 30), Text: "M3 标注演示"));
+
+                // 画笔演示：正弦波浪采样点，验证 DrawCurve 平滑渲染
+                int penW = Math.Max(3, Selection.Height / 60);
+                var wave = new List<Point>();
+                for (int i = 0; i <= 60; i++)
+                {
+                    double u = i / 60.0;
+                    wave.Add(new Point(
+                        Selection.X + Selection.Width * 2 / 10 + (int)(Selection.Width * 0.5 * u),
+                        Selection.Y + Selection.Height / 10 + (int)(Selection.Height * 0.08 * Math.Sin(u * 4 * Math.PI))));
+                }
+                _history.Push(new Annotation(AnnotationTool.Pen, wave.ToArray(),
+                    Color.FromArgb(255, 50, 205, 50), penW));
                 RefreshAll();
             }
             var t = new System.Windows.Forms.Timer { Interval = 6000 };
