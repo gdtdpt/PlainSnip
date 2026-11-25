@@ -203,9 +203,9 @@ public sealed class CaptureOverlayForm : Form
     private void DrawToolbar(Graphics g)
     {
         var selLocal = _session.SelectionLocal(_screen);
-        int btnH = S(30), margin = S(6), padX = S(5), gap = S(1), iconBtn = S(26), sepW = S(7), radius = S(6);
+        int btnH = S(34), margin = S(6), padX = S(8), gap = S(2), iconBtn = S(28), sepW = S(10), radius = S(9);
         const int btnCount = 16;   // 8 工具 + 撤销/重做 + 颜色/线宽 + 贴图/复制/保存/取消
-        int total = padX * 2 + btnCount * iconBtn + (btnCount - 1) * gap + 3 * (sepW + gap * 2);
+        int total = padX * 2 + btnCount * iconBtn + (btnCount - 1) * gap + 3 * sepW;
 
         var tb = new Rectangle(selLocal.X, selLocal.Bottom + margin, total, btnH);
         if (tb.Bottom > ClientSize.Height) tb.Y = selLocal.Y - margin - btnH;      // 贴底翻转
@@ -216,12 +216,11 @@ public sealed class CaptureOverlayForm : Form
         _tbDisabled.Clear();
 
         using var bgPath = RoundRect(tb, radius);
-        using (var bg = new SolidBrush(Color.FromArgb(245, 245, 245))) g.FillPath(bg, bgPath);
-        using (var border = new Pen(Color.FromArgb(204, 204, 204))) g.DrawPath(border, bgPath);
+        using (var bg = new SolidBrush(Color.FromArgb(34, 34, 34))) g.FillPath(bg, bgPath);
+        using (var border = new Pen(Color.FromArgb(58, 58, 58))) g.DrawPath(border, bgPath);
 
-        using var hoverBg = new SolidBrush(Color.FromArgb(228, 228, 228));
-        using var activeBg = new SolidBrush(Color.FromArgb(206, 231, 255));
-        using var sepPen = new Pen(Color.FromArgb(214, 214, 214), 1f);
+        using var hoverBg = new SolidBrush(Color.FromArgb(54, 54, 54));
+        using var activeBg = new SolidBrush(Color.FromArgb(78, 78, 78));
 
         int x = tb.X + padX;
         Rectangle AddBtn(ToolBtn id, bool active, bool disabled = false)
@@ -239,9 +238,8 @@ public sealed class CaptureOverlayForm : Form
         }
         void AddSep()
         {
-            x += gap;
-            g.DrawLine(sepPen, x, tb.Y + S(7), x, tb.Bottom - S(7));
-            x += sepW + gap;
+            // PixPin 风格：不画分隔线，只留一段更宽的呼吸间距
+            x += sepW;
         }
 
         var tools = new[] { (ToolBtn.Select, AnnotationTool.None), (ToolBtn.Rect, AnnotationTool.Rect),
@@ -284,7 +282,7 @@ public sealed class CaptureOverlayForm : Form
     /// </summary>
     private void DrawToolIcon(Graphics g, ToolBtn id, Rectangle r, bool disabled)
     {
-        Color ic = disabled ? Color.FromArgb(185, 185, 185) : Color.FromArgb(60, 60, 60);
+        Color ic = disabled ? Color.FromArgb(106, 106, 106) : Color.FromArgb(235, 235, 235);
         float dpi = DeviceDpi / 96f;
         int U(int v) => (int)Math.Round(v * dpi);
         int cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
