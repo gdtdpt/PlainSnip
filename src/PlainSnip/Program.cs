@@ -34,6 +34,13 @@ internal static class Program
                     Application.Run(hoverSession.InteractiveForm);
                 return 0;
 
+            case "scroll":
+                // UI 冒烟入口：自动框选后进入长截图态（挖洞/预览/工具条），6 秒自动退出
+                var scrollSession = CaptureSession.Start(debug: true, debugScroll: true);
+                if (scrollSession?.InteractiveForm != null)
+                    Application.Run(scrollSession.InteractiveForm);
+                return 0;
+
             case "pin":
                 // UI 冒烟入口：造一张合成图钉到屏幕中央（带边框与角标），8 秒后自动退出
                 return RunPinSmoke();

@@ -22,7 +22,7 @@ public sealed class CaptureOverlayForm : Form
     private const int MagZoom = MagBox / MagSrc; // 9x
 
     /// <summary>工具条按钮标识。</summary>
-    private enum ToolBtn { Select, Rect, Ellipse, Arrow, Pen, Text, Mosaic, Serial, Undo, Redo, Color, Width, Pin, Copy, Save, Cancel }
+    private enum ToolBtn { Select, Rect, Ellipse, Arrow, Pen, Text, Mosaic, Serial, Undo, Redo, Color, Width, Scroll, Pin, Copy, Save, Cancel, LsCopy, LsSave, LsPin, LsAuto, LsExit }
 
     private readonly List<(ToolBtn Id, Rectangle Rect)> _tbItems = new();
     private readonly HashSet<ToolBtn> _tbDisabled = new();
@@ -63,12 +63,66 @@ public sealed class CaptureOverlayForm : Form
     private Point LocalFromVirtual(Point v) => new(v.X - _screen.Bounds.X, v.Y - _screen.Bounds.Y);
     private int S(int logical) => logical * DeviceDpi / 96;
 
+    // ---- 长截图形态转换（M4 §4：SetWindowRgn 挖环形洞，选区内零渲染零命中）----
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRectRgn(int x1, int y1, int x2, int y2);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr hObject);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+
+    private const int RGN_DIFF = 4;
+    private bool _rgnApplied;
+
+    [DllImport("gdi32.dll")]
+    private static extern int CombineRgn(IntPtr hDest, IntPtr hSrc1, IntPtr hSrc2, int mode);
+
+    /// <summary>进入长截图态：把窗口区域挖去选区矩形（洞内不渲染不命中，滚轮直达目标窗口）。</summary>
+    internal void ApplyLongShotVisual()
+    {
+        var selLocal = _session.SelectionLocal(_screen);
+        _rgnApplied = !selLocal.IsEmpty;
+        if (_rgnApplied)
+        {
+            IntPtr all = CreateRectRgn(0, 0, ClientSize.Width, ClientSize.Height);
+            IntPtr hole = CreateRectRgn(selLocal.X, selLocal.Y, selLocal.Right, selLocal.Bottom);
+            IntPtr ring = CreateRectRgn(0, 0, 0, 0);
+            CombineRgn(ring, all, hole, RGN_DIFF);
+            SetWindowRgn(Handle, ring, true);   // 系统接管 ring，不 DeleteObject
+            DeleteObject(all);
+            DeleteObject(hole);
+        }
+        Cursor = Cursors.Default;
+        Invalidate();
+    }
+
+    /// <summary>退出长截图态：移除窗口区域，恢复完整遮罩。</summary>
+    internal void LeaveLongShotVisual()
+    {
+        if (_rgnApplied)
+        {
+            SetWindowRgn(Handle, IntPtr.Zero, true);
+            _rgnApplied = false;
+        }
+        Cursor = Cursors.Cross;
+        Invalidate();
+    }
+
     // ---- 绘制 ----
 
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.DrawImageUnscaled(_snap, 0, 0);
+
+        if (_session.LongShotActive)
+        {
+            DrawLongShot(g);
+            return;
+        }
 
         var selLocal = _session.SelectionLocal(_screen);
         using var dark = new SolidBrush(Color.FromArgb(105, 0, 0, 0));
@@ -204,7 +258,7 @@ public sealed class CaptureOverlayForm : Form
     {
         var selLocal = _session.SelectionLocal(_screen);
         int btnH = S(34), margin = S(6), padX = S(8), gap = S(2), iconBtn = S(28), sepW = S(10), radius = S(9);
-        const int btnCount = 16;   // 8 工具 + 撤销/重做 + 颜色/线宽 + 贴图/复制/保存/取消
+        const int btnCount = 17;   // 8 工具 + 撤销/重做 + 颜色/线宽 + 长截图/贴图/复制/保存/取消
         int total = padX * 2 + btnCount * iconBtn + (btnCount - 1) * gap + 3 * sepW;
 
         var tb = new Rectangle(selLocal.X, selLocal.Bottom + margin, total, btnH);
@@ -257,10 +311,86 @@ public sealed class CaptureOverlayForm : Form
         DrawToolIcon(g, ToolBtn.Color, AddBtn(ToolBtn.Color, false), false);
         DrawToolIcon(g, ToolBtn.Width, AddBtn(ToolBtn.Width, false), false);
         AddSep();
+        DrawToolIcon(g, ToolBtn.Scroll, AddBtn(ToolBtn.Scroll, false), false);
         DrawToolIcon(g, ToolBtn.Pin, AddBtn(ToolBtn.Pin, false), false);
         DrawToolIcon(g, ToolBtn.Copy, AddBtn(ToolBtn.Copy, false), false);
         DrawToolIcon(g, ToolBtn.Save, AddBtn(ToolBtn.Save, false), false);
         DrawToolIcon(g, ToolBtn.Cancel, AddBtn(ToolBtn.Cancel, false), false);
+    }
+
+    /// <summary>长截图态绘制：洞口描边 + 长截图工具条 + 状态（洞内不渲染，由 Rgn 保证）。</summary>
+    private void DrawLongShot(Graphics g)
+    {
+        var selLocal = _session.SelectionLocal(_screen);
+        if (selLocal.IsEmpty)
+        {
+            using var dark = new SolidBrush(Color.FromArgb(105, 0, 0, 0));
+            g.FillRectangle(dark, ClientRectangle);
+            return;
+        }
+
+        // 暗环（Rgn 已裁掉洞内，这里整屏填充即可）
+        using (var dark = new SolidBrush(Color.FromArgb(105, 0, 0, 0)))
+            g.FillRectangle(dark, ClientRectangle);
+
+        // 洞口描边：整体外扩 1px，保证线完全落在环区内不被 Rgn 裁掉
+        using (var border = new Pen(Color.White, 1f))
+            g.DrawRectangle(border, selLocal.X - 1, selLocal.Y - 1, selLocal.Width + 1, selLocal.Height + 1);
+
+        DrawLongToolbar(g);
+    }
+
+    /// <summary>长截图工具条：复制/保存/贴图/自动滚/退出 + 状态文本；布局避让洞矩形（不进帧）。</summary>
+    private void DrawLongToolbar(Graphics g)
+    {
+        var selLocal = _session.SelectionLocal(_screen);
+        int btnH = S(34), margin = S(6), padX = S(8), gap = S(2), iconBtn = S(28), sepW = S(10), radius = S(9);
+        const int btnCount = 5;   // 复制/保存/贴图/自动滚/退出
+
+        string status = _session.LongStatusText();
+        int statusW = TextRenderer.MeasureText(status, _uiFont).Width + S(10);
+        int total = padX * 2 + btnCount * iconBtn + (btnCount - 1) * gap + sepW + statusW;
+
+        var tb = new Rectangle(selLocal.X, selLocal.Bottom + margin, total, btnH);
+        if (tb.Bottom > ClientSize.Height) tb.Y = selLocal.Y - margin - btnH;      // 贴底翻转
+        bool fits = tb.Y >= 0 && tb.Bottom <= ClientSize.Height && tb.X >= 0;
+        tb.X = Math.Clamp(tb.X, 0, Math.Max(0, ClientSize.Width - total));
+        if (!fits) return;   // 选区占满全屏：无空间摆条，纯键位操作
+        _toolbarBounds = tb;
+
+        _tbItems.Clear();
+        _tbDisabled.Clear();
+
+        using var bgPath = RoundRect(tb, radius);
+        using (var bg = new SolidBrush(Color.FromArgb(34, 34, 34))) g.FillPath(bg, bgPath);
+        using (var border = new Pen(Color.FromArgb(58, 58, 58))) g.DrawPath(border, bgPath);
+        using var hoverBg = new SolidBrush(Color.FromArgb(54, 54, 54));
+        using var activeBg = new SolidBrush(Color.FromArgb(78, 78, 78));
+
+        int x = tb.X + padX;
+        Rectangle AddBtn(ToolBtn id, bool active)
+        {
+            var rect = new Rectangle(x, tb.Y + (btnH - iconBtn) / 2, iconBtn, iconBtn);
+            _tbItems.Add((id, rect));
+            if (active || _hoverBtn == id)
+            {
+                using var p = RoundRect(rect, S(4));
+                g.FillPath(active ? activeBg : hoverBg, p);
+            }
+            x += iconBtn + gap;
+            return rect;
+        }
+
+        DrawToolIcon(g, ToolBtn.LsCopy, AddBtn(ToolBtn.LsCopy, false), false);
+        DrawToolIcon(g, ToolBtn.LsSave, AddBtn(ToolBtn.LsSave, false), false);
+        DrawToolIcon(g, ToolBtn.LsPin, AddBtn(ToolBtn.LsPin, false), false);
+        DrawToolIcon(g, ToolBtn.LsAuto, AddBtn(ToolBtn.LsAuto, _session.LongAutoScroll), false);
+        DrawToolIcon(g, ToolBtn.LsExit, AddBtn(ToolBtn.LsExit, false), false);
+
+        x += sepW;
+        var stRect = new Rectangle(x, tb.Y, tb.Right - padX - x, btnH);
+        TextRenderer.DrawText(g, status, _uiFont, stRect, _session.LongStatusColor(),
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
     }
 
     private static GraphicsPath RoundRect(Rectangle r, int radius)
@@ -299,6 +429,10 @@ public sealed class CaptureOverlayForm : Form
             ToolBtn.Save => "Save",       // save（软盘）
             ToolBtn.Copy => "Copy",       // copy（双页）
             ToolBtn.Cancel => "Cancel",   // x
+            ToolBtn.LsCopy => "Copy",
+            ToolBtn.LsSave => "Save",
+            ToolBtn.LsPin => "Pin",
+            ToolBtn.LsExit => "Cancel",
             _ => null,
         };
         if (glyph != null)
@@ -377,6 +511,46 @@ public sealed class CaptureOverlayForm : Form
                     g.DrawLine(thick, cx - w2 / 2, cy, cx + w2 / 2, cy);
                     break;
                 }
+                case ToolBtn.Scroll:    // 向下箭头 + 底部托盘 = 长截图（滚动拼接）
+                {
+                    using var pen = new Pen(ic, IconStrokeWidth)
+                    {
+                        StartCap = LineCap.Round,
+                        EndCap = LineCap.Round,
+                        LineJoin = LineJoin.Round,
+                    };
+                    g.DrawLine(pen, cx, cy - U(9), cx, cy + U(3));
+                    g.DrawLines(pen, new[]
+                    {
+                        new Point(cx - U(6), cy - U(3)),
+                        new Point(cx, cy + U(4)),
+                        new Point(cx + U(6), cy - U(3)),
+                    });
+                    g.DrawLine(pen, cx - U(9), cy + U(9), cx + U(9), cy + U(9));
+                    break;
+                }
+                case ToolBtn.LsAuto:    // 双 chevron 向下 = 自动滚动
+                {
+                    using var pen = new Pen(ic, IconStrokeWidth)
+                    {
+                        StartCap = LineCap.Round,
+                        EndCap = LineCap.Round,
+                        LineJoin = LineJoin.Round,
+                    };
+                    g.DrawLines(pen, new[]
+                    {
+                        new Point(cx - U(7), cy - U(7)),
+                        new Point(cx, cy - U(1)),
+                        new Point(cx + U(7), cy - U(7)),
+                    });
+                    g.DrawLines(pen, new[]
+                    {
+                        new Point(cx - U(7), cy + U(1)),
+                        new Point(cx, cy + U(7)),
+                        new Point(cx + U(7), cy + U(1)),
+                    });
+                    break;
+                }
             }
         }
         finally
@@ -442,6 +616,19 @@ public sealed class CaptureOverlayForm : Form
     private void HandleToolbarClick(ToolBtn id, MouseEventArgs e)
     {
         if (_tbDisabled.Contains(id)) { Invalidate(); return; }
+        if (_session.LongShotActive)
+        {
+            switch (id)
+            {
+                case ToolBtn.LsCopy: _session.CopyLongShot(); return;
+                case ToolBtn.LsSave: _session.SaveLongShot(); return;
+                case ToolBtn.LsPin: _session.PinLongShot(); return;
+                case ToolBtn.LsAuto: _session.ToggleAutoScroll(); break;
+                case ToolBtn.LsExit: _session.ExitLongShot(); return;
+            }
+            Invalidate();
+            return;
+        }
         switch (id)
         {
             case ToolBtn.Select: _session.SetTool(AnnotationTool.None); break;
@@ -456,6 +643,7 @@ public sealed class CaptureOverlayForm : Form
             case ToolBtn.Redo: _session.Redo(); break;
             case ToolBtn.Color: ShowColorMenu(RectOf(id)); break;
             case ToolBtn.Width: ShowWidthMenu(RectOf(id)); break;
+            case ToolBtn.Scroll: _session.EnterLongShot(); break;
             case ToolBtn.Pin: _session.PinSelection(); break;
             case ToolBtn.Copy: _session.CopySelection(); break;
             case ToolBtn.Save: _session.SaveSelection(); break;
@@ -657,6 +845,18 @@ public sealed class CaptureOverlayForm : Form
         if (!_interactive) { _session.SwitchInteractive(this); }
 
         var v = VirtualFromClient(e.Location);
+        if (_session.LongShotActive)
+        {
+            // 长截图态：洞内事件直达目标窗口不会到达这里；环区内仅工具条可点，右键退出
+            if (e.Button == MouseButtons.Right) { _session.ExitLongShot(); return; }
+            if (e.Button == MouseButtons.Left)
+            {
+                var btn = HitToolbar(e.Location);
+                if (btn != null) HandleToolbarClick(btn.Value, e);
+            }
+            return;
+        }
+
         if (e.Button == MouseButtons.Right) { _session.Cancel(); return; }
         if (e.Button != MouseButtons.Left) return;
 
@@ -708,6 +908,17 @@ public sealed class CaptureOverlayForm : Form
         base.OnMouseMove(e);
         var v = VirtualFromClient(e.Location);
         _cursorVirtual = v;
+
+        if (_session.LongShotActive)
+        {
+            // 长截图态：只处理工具条悬停高亮（洞内鼠标事件直达目标窗口）
+            if (!_interactive) { _session.SwitchInteractive(this); }
+            Cursor = HitToolbar(e.Location) != null ? Cursors.Hand : Cursors.Default;
+            var hoverLs = HitToolbar(e.Location);
+            if (hoverLs != _hoverBtn) { _hoverBtn = hoverLs; }
+            Invalidate();
+            return;
+        }
 
         if (!_interactive)
         {
@@ -809,6 +1020,20 @@ public sealed class CaptureOverlayForm : Form
         base.OnKeyDown(e);
         if (_textEditor != null) return;   // 文字编辑中，按键归编辑框
 
+        if (_session.LongShotActive)
+        {
+            // 长截图键位（设计 §8）：A 自动滚、Ctrl+C/Ctrl+S/Enter 完成、Esc/L 退出回 Selected
+            switch (e.KeyCode)
+            {
+                case Keys.A: _session.ToggleAutoScroll(); e.Handled = true; break;
+                case Keys.Escape or Keys.L: _session.ExitLongShot(); e.Handled = true; break;
+                case Keys.C when e.Control: _session.CopyLongShot(); e.Handled = true; break;
+                case Keys.S when e.Control: _session.SaveLongShot(); e.Handled = true; break;
+                case Keys.Enter: _session.CopyLongShot(); e.Handled = true; break;
+            }
+            return;
+        }
+
         switch (e.KeyCode)
         {
             case Keys.Escape:
@@ -818,6 +1043,10 @@ public sealed class CaptureOverlayForm : Form
                 break;
             case Keys.Enter:
                 _session.CopySelection();
+                break;
+            case Keys.L when _session.State == CaptureSession.SelState.Selected:
+                _session.EnterLongShot();
+                e.Handled = true;
                 break;
             case Keys.Z when e.Control && e.Shift:
                 _session.Redo();

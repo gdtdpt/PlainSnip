@@ -39,6 +39,7 @@ public sealed class CaptureSession : IDisposable
     public Rectangle DragOrigSel { get; private set; }  // 拖动开始时的选区
     public bool DebugMode { get; init; }                // --shot 冒烟：自动框选 + 定时退出
     public bool DebugHover { get; init; }               // --hover 冒烟：按光标位置预选 + 定时退出
+    public bool DebugScroll { get; init; }              // --scroll 冒烟：框选后进入长截图态 + 定时退出
 
     // ---- 标注状态暴露（M3）----
     public AnnotationHistory History => _history;
@@ -52,11 +53,24 @@ public sealed class CaptureSession : IDisposable
     public IReadOnlyList<ScreenCapture.ScreenShot> Shots => _shots;
     public CaptureOverlayForm? Interactive => _interactive;
 
+    // ---- 长截图（M4，docs/m4-scroll-design.md）----
+    public bool LongShotActive { get; private set; }
+    public bool LongAutoScroll { get; private set; }
+    public bool LongBottom { get; private set; }          // 已到底（连续相同帧 ≥2，D4）
+    public bool LongMatchFailed { get; private set; }     // 匹配失败，等待回滚（D6）
+    public bool LongHeightLimited { get; private set; }   // 达 16384px 上限（D7）
+    public int LongViewTopY { get; private set; } = -1;   // 绿框顶部在结果中的 y
+    public int LongResultHeight { get; private set; }
+    internal ScrollCaptureSession? Scroll => _scroll;
+    private ScrollCaptureSession? _scroll;
+    private ScrollPreviewForm? _preview;
+    private System.Windows.Forms.Timer? _frameTimer;
+
     /// <summary>启动会话。已有会话时返回 null（F1 重复按忽略）。</summary>
-    public static CaptureSession? Start(bool debug = false, bool debugHover = false)
+    public static CaptureSession? Start(bool debug = false, bool debugHover = false, bool debugScroll = false)
     {
         if (_current != null) return null;
-        _current = new CaptureSession { DebugMode = debug, DebugHover = debugHover };
+        _current = new CaptureSession { DebugMode = debug, DebugHover = debugHover, DebugScroll = debugScroll };
         _current.Begin();
         return _current;
     }
@@ -124,6 +138,14 @@ public sealed class CaptureSession : IDisposable
             var t = new System.Windows.Forms.Timer { Interval = 6000 };
             t.Tick += (_, _) => { t.Stop(); Cancel(); };
             t.Start();
+
+            if (DebugScroll)
+            {
+                // --scroll 冒烟：框选 400ms 后进入长截图态（验证挖洞/预览/工具条），随 6s 定时退出
+                var st = new System.Windows.Forms.Timer { Interval = 400 };
+                st.Tick += (_, _) => { st.Stop(); st.Dispose(); EnterLongShot(); };
+                st.Start();
+            }
         }
         else
         {
@@ -261,6 +283,180 @@ public sealed class CaptureSession : IDisposable
     }
 
     public void Cancel() => Close();
+
+    // ---- 长截图（M4，由遮罩窗 L 键 / 工具条触发）----
+
+    /// <summary>进入长截图态：遮罩窗挖洞、开预览窗、启动 100ms 截帧（D3）。</summary>
+    public void EnterLongShot()
+    {
+        if (LongShotActive || State != SelState.Selected || Selection.IsEmpty) return;
+        LongShotActive = true;
+        LongAutoScroll = LongBottom = LongMatchFailed = LongHeightLimited = false;
+        LongViewTopY = -1;
+        LongResultHeight = 0;
+        ClearHover();
+
+        _scroll = new ScrollCaptureSession();
+        foreach (var o in _overlays) o.ApplyLongShotVisual();
+
+        _preview = new ScrollPreviewForm(this);
+        _preview.Show(_interactive);
+        _preview.PlaceNextTo(Selection);
+
+        _frameTimer = new System.Windows.Forms.Timer { Interval = 100 };
+        _frameTimer.Tick += (_, _) => FrameTick();
+        _frameTimer.Start();
+        FrameTick();   // 首帧立即落底
+    }
+
+    /// <summary>退出长截图态回 Selected（Esc / L）：恢复遮罩、关预览，快照模式完好（§3）。</summary>
+    public void ExitLongShot()
+    {
+        if (!LongShotActive) return;
+        LongShotActive = false;
+        LongAutoScroll = false;
+        StopLongShotResources();
+        foreach (var o in _overlays) o.LeaveLongShotVisual();
+        State = SelState.Selected;
+        RefreshAll();
+    }
+
+    private void StopLongShotResources()
+    {
+        _frameTimer?.Stop();
+        _frameTimer?.Dispose();
+        _frameTimer = null;
+        _preview?.Close();
+        _preview?.Dispose();
+        _preview = null;
+        _scroll?.Dispose();
+        _scroll = null;
+    }
+
+    public void ToggleAutoScroll()
+    {
+        if (!LongShotActive) return;
+        LongAutoScroll = !LongAutoScroll;
+        RefreshAll();
+        _preview?.Invalidate();
+    }
+
+    /// <summary>100ms 节拍：自动滚动（A）+ 抓帧喂拼接会话。</summary>
+    private void FrameTick()
+    {
+        if (!LongShotActive || _scroll == null) return;
+        if (LongAutoScroll) AutoScrollOnce();
+
+        using var frame = ScreenCapture.CaptureRegion(Selection);
+        var r = _scroll.ProcessFrame(frame);
+        LongViewTopY = r.ViewTopY;
+        LongResultHeight = r.ResultHeight;
+        LongMatchFailed = r.Status == ScrollFrameStatus.MatchFailed;
+        LongHeightLimited = r.Status == ScrollFrameStatus.HeightLimit;
+        LongBottom = r.Status == ScrollFrameStatus.NoChange && _scroll.SameFrameStreak >= 2;
+        if (LongBottom || LongHeightLimited) LongAutoScroll = false;   // 到底/达上限自动停（D4/D7）
+        _preview?.Invalidate();
+    }
+
+    /// <summary>自动滚动一次（D5：SendInput 滚轮注入，光标必须在选区内；速度按选区高度自适应）。</summary>
+    private void AutoScrollOnce()
+    {
+        if (!Selection.Contains(Cursor.Position)) return;
+        int notches = Math.Clamp(Selection.Height / 220, 2, 6);
+        SendWheel(-(120 * notches));   // 负 delta = 向下滚
+    }
+
+    public string LongStatusText()
+    {
+        string px = $"{LongResultHeight}px";
+        if (LongMatchFailed) return $"{px} · 匹配失败，往回滚再向下";
+        if (LongHeightLimited) return $"{px} · 已达高度上限";
+        if (LongBottom) return $"{px} · 已到底";
+        if (LongAutoScroll) return $"{px} · 自动滚动中";
+        return $"{px} · 滚动内容 · A 自动滚 · Esc 退出";
+    }
+
+    public Color LongStatusColor() =>
+        LongMatchFailed ? Color.OrangeRed :
+        LongHeightLimited ? Color.Orange :
+        LongBottom ? Color.Gold :
+        LongAutoScroll ? Color.LimeGreen : Color.FromArgb(190, 220, 230, 245);
+
+    /// <summary>完成：复制长图并关闭。</summary>
+    public void CopyLongShot()
+    {
+        if (_scroll?.Result is not Bitmap res) return;
+        using var clone = (Bitmap)res.Clone();
+        try { Clipboard.SetImage(clone); } catch (ExternalException) { }
+        Close();
+    }
+
+    /// <summary>完成：保存长图。</summary>
+    public void SaveLongShot()
+    {
+        if (_scroll?.Result is not Bitmap res || _interactive == null) return;
+        using var bmp = (Bitmap)res.Clone();
+        using var dlg = new SaveFileDialog
+        {
+            Filter = "PNG 图片|*.png",
+            FileName = $"PlainSnip-长截图-{DateTime.Now:yyyyMMdd-HHmmss}.png",
+        };
+        _interactive.TopMost = false;
+        try
+        {
+            if (dlg.ShowDialog(_interactive) == DialogResult.OK)
+            {
+                bmp.Save(dlg.FileName, System.Drawing.Imaging.ImageFormat.Png);
+                Close();
+                return;
+            }
+        }
+        finally
+        {
+            if (_current == this && _interactive != null && !_interactive.IsDisposed)
+                _interactive.TopMost = true;
+        }
+    }
+
+    /// <summary>完成：把长图钉成贴图（复用 M2）。</summary>
+    public void PinLongShot()
+    {
+        if (_scroll?.Result is not Bitmap res) return;
+        using var bmp = (Bitmap)res.Clone();
+        var at = Selection.Location;
+        Close();
+        PinManager.Current.Create(bmp, at);
+    }
+
+    // ---- 滚轮注入（D5）----
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx, dy;
+        public uint mouseData, dwFlags, time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint type;
+        public MOUSEINPUT mi;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    private static void SendWheel(int delta)
+    {
+        var input = new INPUT
+        {
+            type = 0,   // INPUT_MOUSE
+            mi = new MOUSEINPUT { mouseData = unchecked((uint)delta), dwFlags = 0x0800 },   // MOUSEEVENTF_WHEEL
+        };
+        _ = SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+    }
 
     // ---- 标注操作（M3，由遮罩窗输入事件驱动）----
 
@@ -478,6 +674,9 @@ public sealed class CaptureSession : IDisposable
     private void Close()
     {
         _current = null;
+        LongShotActive = false;
+        StopLongShotResources();
+        foreach (var o in _overlays) o.LeaveLongShotVisual();
         foreach (var o in _overlays) o.Close();
         foreach (var shot in _shots) shot.Bitmap.Dispose();
         _shots.Clear();
